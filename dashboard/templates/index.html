@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Binance Sell Bot – Dashboard</title>
+  <meta name="description" content="Automated Binance sell bot – monitor a coin price and auto-sell when your target is reached." />
+
+  <!-- Google Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet" />
+
+  <!-- Chart.js -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+
+  <!-- Socket.IO -->
+  <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+
+  <link rel="stylesheet" href="/static/css/style.css" />
+</head>
+<body>
+
+<!-- ── Header ─────────────────────────────────────────────────────────── -->
+<header class="header">
+  <div class="header-inner">
+    <div class="logo">
+      <span class="logo-icon">⚡</span>
+      <span class="logo-text">Binance <span class="accent">Sell Bot</span></span>
+    </div>
+    <div class="header-badges">
+      <span id="mode-badge" class="badge badge-testnet">TESTNET</span>
+      <span id="status-badge" class="badge badge-idle">IDLE</span>
+    </div>
+  </div>
+</header>
+
+<!-- ── Main grid ────────────────────────────────────────────────────────── -->
+<main class="grid">
+
+  <!-- LEFT COLUMN -->
+  <aside class="sidebar">
+
+    <!-- Config card -->
+    <div class="card" id="config-card">
+      <div class="card-title">
+        <span class="card-icon">⚙️</span> Bot Configuration
+      </div>
+
+      <form id="bot-form">
+
+        <!-- Mode toggle -->
+        <div class="form-group">
+          <label class="form-label">Trading Mode</label>
+          <div class="toggle-group">
+            <button type="button" id="btn-testnet" class="toggle-btn active" data-mode="testnet">
+              🧪 Testnet
+            </button>
+            <button type="button" id="btn-live" class="toggle-btn" data-mode="live">
+              🔴 Live
+            </button>
+          </div>
+          <input type="hidden" id="mode-input" value="testnet" />
+        </div>
+
+        <!-- Symbol -->
+        <div class="form-group">
+          <label class="form-label" for="symbol">Coin Symbol</label>
+          <div class="input-wrapper">
+            <input type="text" id="symbol" class="form-input" placeholder="e.g. BTCUSDT"
+                   maxlength="20" autocomplete="off" spellcheck="false" />
+            <button type="button" id="check-price-btn" class="input-action-btn" title="Check current price">
+              🔍
+            </button>
+          </div>
+          <span class="form-hint" id="current-price-hint"></span>
+        </div>
+
+        <!-- Target Type Selection -->
+        <div class="form-group">
+          <label class="form-label" for="target-type">Target Type</label>
+          <select id="target-type" class="form-input">
+            <option value="price">💵 Exact Target Price ($)</option>
+            <option value="percentage">📈 Target Profit (%)</option>
+          </select>
+        </div>
+
+        <!-- Target price / percentage input -->
+        <div class="form-group">
+          <label class="form-label" id="target-label" for="target-price">Target Sell Price (USDT)</label>
+          <input type="number" id="target-price" class="form-input" placeholder="e.g. 70000"
+                 min="0" step="any" />
+          <span class="form-hint" id="target-hint">Sell order triggers when price reaches this value</span>
+        </div>
+
+        <!-- Amount Type Selection -->
+        <div class="form-group">
+          <label class="form-label" for="quantity-type">Amount Type</label>
+          <select id="quantity-type" class="form-input">
+            <option value="usdt">💵 Amount in USDT ($)</option>
+            <option value="crypto">🪙 Amount in Coin Quantity</option>
+          </select>
+        </div>
+
+        <!-- Quantity input -->
+        <div class="form-group">
+          <label class="form-label" id="quantity-label" for="quantity">Amount to Sell (USDT)</label>
+          <input type="number" id="quantity" class="form-input" placeholder="e.g. 100"
+                 min="0" step="any" />
+          <span class="form-hint" id="quantity-hint">Total USDT value to sell (e.g. $100)</span>
+        </div>
+
+        <!-- Price Drop Alert (%) -->
+        <div class="form-group">
+          <label class="form-label" for="drop-percentage">Price Drop Alert Threshold (%)</label>
+          <input type="number" id="drop-percentage" class="form-input" placeholder="e.g. 5"
+                 min="0" max="100" step="any" value="5" />
+          <span class="form-hint">Triggers n8n webhook if price drops by this %</span>
+        </div>
+
+        <!-- n8n Webhook URL -->
+        <div class="form-group">
+          <label class="form-label" for="n8n-webhook-url">n8n Webhook URL</label>
+          <input type="url" id="n8n-webhook-url" class="form-input" placeholder="https://n8n.yourdomain.com/webhook/..." />
+          <span class="form-hint">Sends JSON alert payload to your n8n workflow</span>
+        </div>
+
+        <!-- Action on Price Drop -->
+        <div class="form-group">
+          <label class="form-label" for="auto-convert">Action on Price Drop</label>
+          <select id="auto-convert" class="form-input">
+            <option value="false">🔔 Webhook Alert Only</option>
+            <option value="true">🔄 Auto-Convert (Sell & Buy Top 4H Gainer)</option>
+          </select>
+          <span class="form-hint">Choose whether to automatically switch to Top 4H Gainer coin</span>
+        </div>
+
+        <!-- Action on Goal Reached -->
+        <div class="form-group">
+          <label class="form-label" for="auto-restart-on-trigger">Action on Goal Reached (Profit Take)</label>
+          <select id="auto-restart-on-trigger" class="form-input">
+            <option value="false">🏁 Stop Trading (Close Position)</option>
+            <option value="true">🔄 Auto-Restart Bot Automatically</option>
+          </select>
+          <span class="form-hint">Choose whether to automatically restart the bot with same settings after selling at target</span>
+        </div>
+
+        <!-- Actions -->
+        <div class="form-actions">
+          <button type="submit" id="start-btn" class="btn btn-primary">
+            <span class="btn-icon">▶</span> Start Bot
+          </button>
+          <button type="button" id="stop-btn" class="btn btn-danger" disabled>
+            <span class="btn-icon">■</span> Stop
+          </button>
+        </div>
+
+        <div id="form-error" class="form-error hidden"></div>
+      </form>
+    </div>
+
+    <!-- Stats card -->
+    <div class="card stats-card">
+      <div class="card-title"><span class="card-icon">📊</span> Live Stats</div>
+      <div class="stat-grid">
+        <div class="stat">
+          <div class="stat-label">Current Price</div>
+          <div class="stat-value" id="stat-price">—</div>
+        </div>
+        <div class="stat">
+          <div class="stat-label">Target Price</div>
+          <div class="stat-value accent" id="stat-target">—</div>
+        </div>
+        <div class="stat">
+          <div class="stat-label">Distance to Target</div>
+          <div class="stat-value" id="stat-distance">—</div>
+        </div>
+        <div class="stat">
+          <div class="stat-label">Amount</div>
+          <div class="stat-value" id="stat-amount">—</div>
+        </div>
+      </div>
+    </div>
+
+  </aside>
+
+  <!-- RIGHT COLUMN -->
+  <section class="main-panel">
+
+    <!-- Price chart card -->
+    <div class="card chart-card">
+      <div class="card-header-row">
+        <div class="card-title"><span class="card-icon">📈</span> Live Price Chart</div>
+        <div class="chart-symbol-label" id="chart-symbol">—</div>
+      </div>
+      <div class="chart-wrapper">
+        <canvas id="price-chart"></canvas>
+        <div class="chart-placeholder" id="chart-placeholder">
+          Start the bot to see a live price feed
+        </div>
+      </div>
+      <!-- Target price line indicator -->
+      <div class="target-indicator" id="target-indicator" style="display:none">
+        <span class="target-dot"></span>
+        Target: <strong id="target-indicator-value">—</strong>
+      </div>
+    </div>
+
+    <!-- Trade log card -->
+    <div class="card log-card">
+      <div class="card-header-row">
+        <div class="card-title"><span class="card-icon">📋</span> Trade Log</div>
+        <button id="clear-log-btn" class="btn-ghost" title="Clear log">Clear</button>
+      </div>
+      <div class="log-body" id="log-body">
+        <div class="log-empty">Waiting for bot activity…</div>
+      </div>
+    </div>
+
+  </section>
+
+</main>
+
+<!-- ── Triggered overlay ────────────────────────────────────────────────── -->
+<div class="overlay" id="triggered-overlay" style="display:none">
+  <div class="overlay-card">
+    <div class="overlay-icon">🎯</div>
+    <h2 class="overlay-title">Target Reached!</h2>
+    <p class="overlay-desc" id="overlay-desc">Your sell order has been placed successfully.</p>
+    <button class="btn btn-primary" id="overlay-close-btn">Close</button>
+  </div>
+</div>
+
+<script src="/static/js/app.js"></script>
+</body>
+</html>
