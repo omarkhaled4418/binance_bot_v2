@@ -107,7 +107,12 @@
 
         <!-- Symbol -->
         <div class="form-group">
-          <label class="form-label" for="symbol">Coin Symbol</label>
+          <div class="label-row">
+            <label class="form-label" for="symbol">Coin Symbol</label>
+            <button type="button" id="refresh-bal-btn" class="btn-ghost-sm" title="Refresh Spot Wallet Balances">
+              🔄 Refresh Balance
+            </button>
+          </div>
           <div class="input-wrapper">
             <input type="text" id="symbol" class="form-input" placeholder="e.g. BTCUSDT"
                    maxlength="20" autocomplete="off" spellcheck="false" />
@@ -115,7 +120,14 @@
               🔍
             </button>
           </div>
-          <span class="form-hint" id="current-price-hint"></span>
+          <div class="symbol-meta-row">
+            <span class="form-hint" id="current-price-hint"></span>
+            <div id="coin-balance-pill" class="coin-balance-pill hidden">
+              <span id="coin-balance-text">Available: 0</span>
+              <button type="button" id="btn-use-max" class="btn-chip" title="Fill 100% of available coins">MAX</button>
+              <button type="button" id="btn-quick-buy" class="btn-chip-buy" title="Quickly buy $50 of this coin with testnet USDT">🛒 Buy $50</button>
+            </div>
+          </div>
         </div>
 
         <!-- Target Type Selection -->
@@ -146,7 +158,10 @@
 
         <!-- Quantity input -->
         <div class="form-group">
-          <label class="form-label" id="quantity-label" for="quantity">Amount to Sell (USDT)</label>
+          <div class="label-row">
+            <label class="form-label" id="quantity-label" for="quantity">Amount to Sell (USDT)</label>
+            <span id="usdt-wallet-hint" class="wallet-hint">USDT Wallet: —</span>
+          </div>
           <input type="number" id="quantity" class="form-input" placeholder="e.g. 100"
                  min="0" step="any" />
           <span class="form-hint" id="quantity-hint">Total USDT value to sell (e.g. $100)</span>
@@ -220,6 +235,14 @@
         <div class="stat">
           <div class="stat-label">Amount</div>
           <div class="stat-value" id="stat-amount">—</div>
+        </div>
+        <div class="stat">
+          <div class="stat-label">Coin Spot Holding</div>
+          <div class="stat-value" id="stat-holding">—</div>
+        </div>
+        <div class="stat">
+          <div class="stat-label">Spot USDT Balance</div>
+          <div class="stat-value" id="stat-usdt-balance">—</div>
         </div>
       </div>
     </div>

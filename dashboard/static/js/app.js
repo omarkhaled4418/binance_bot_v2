@@ -1,5 +1,5 @@
 /* ═══════════════════════════════════════════════════════════════════
-   Binance Sell Bot – Frontend Logic with Client-Side Credentials
+   Binance Sell Bot – Frontend Logic with Client-Side Credentials & Spot Balances
    ═══════════════════════════════════════════════════════════════════ */
 
 // ── Socket.IO connection ─────────────────────────────────────────────────────
@@ -27,6 +27,11 @@ const apiVerifyResult  = document.getElementById('api-verify-result');
 
 // Trading form refs
 const symbolInput      = document.getElementById('symbol');
+const refreshBalBtn    = document.getElementById('refresh-bal-btn');
+const coinBalancePill  = document.getElementById('coin-balance-pill');
+const coinBalanceText  = document.getElementById('coin-balance-text');
+const btnUseMax        = document.getElementById('btn-use-max');
+const btnQuickBuy      = document.getElementById('btn-quick-buy');
 const targetTypeSelect = document.getElementById('target-type');
 const targetLabel      = document.getElementById('target-label');
 const targetHint       = document.getElementById('target-hint');
@@ -35,6 +40,7 @@ const quantityTypeSelect = document.getElementById('quantity-type');
 const quantityLabel      = document.getElementById('quantity-label');
 const quantityHint       = document.getElementById('quantity-hint');
 const quantityInput    = document.getElementById('quantity');
+const usdtWalletHint   = document.getElementById('usdt-wallet-hint');
 const dropPercentageInput = document.getElementById('drop-percentage');
 const n8nWebhookUrlInput  = document.getElementById('n8n-webhook-url');
 const autoConvertSelect   = document.getElementById('auto-convert');
@@ -50,6 +56,8 @@ const statPrice        = document.getElementById('stat-price');
 const statTarget       = document.getElementById('stat-target');
 const statDistance     = document.getElementById('stat-distance');
 const statAmount       = document.getElementById('stat-amount');
+const statHolding      = document.getElementById('stat-holding');
+const statUsdtBalance  = document.getElementById('stat-usdt-balance');
 
 const chartSymbolLabel = document.getElementById('chart-symbol');
 const chartPlaceholder = document.getElementById('chart-placeholder');
@@ -70,6 +78,14 @@ let priceHistory  = [];         // { time, price }[]
 let targetPrice   = 0;
 let currentPrice  = 0;
 let configSymbol  = '';
+
+// Wallet State Cache
+let cachedBalances = {
+  usdt_free: 0,
+  coin_asset: '',
+  coin_free: 0,
+  coin_value_usdt: 0,
+};
 
 const MAX_PRICE_POINTS = 120;   // keep last 120 ticks on chart
 
@@ -118,10 +134,14 @@ function loadSavedKeys(mode) {
     apiSecretLabel.textContent = mode === 'live' ? 'Live Binance API Secret' : 'Testnet Binance API Secret';
   }
 
-  // Load saved n8n webhook URL
   const savedWebhook = localStorage.getItem('n8n_webhook_url');
   if (savedWebhook && !n8nWebhookUrlInput.value) {
     n8nWebhookUrlInput.value = savedWebhook;
+  }
+
+  // Auto-fetch balances if credentials exist
+  if (apiKeyInput.value && apiSecretInput.value) {
+    fetchSpotBalances();
   }
 }
 
@@ -140,8 +160,15 @@ function saveKeys(mode) {
   }
 }
 
-apiKeyInput.addEventListener('input', () => saveKeys(currentMode));
-apiSecretInput.addEventListener('input', () => saveKeys(currentMode));
+apiKeyInput.addEventListener('input', () => {
+  saveKeys(currentMode);
+  fetchSpotBalances();
+});
+
+apiSecretInput.addEventListener('input', () => {
+  saveKeys(currentMode);
+  fetchSpotBalances();
+});
 
 n8nWebhookUrlInput.addEventListener('input', () => {
   localStorage.setItem('n8n_webhook_url', n8nWebhookUrlInput.value.trim());
@@ -175,18 +202,149 @@ clearKeysBtn.addEventListener('click', () => {
     apiSecretInput.value = '';
     apiVerifyResult.className = 'api-verify-result hidden';
     apiVerifyResult.textContent = '';
+    resetBalanceDisplay();
     appendLog('info', `🗑️ Cleared saved credentials for ${currentMode.toUpperCase()} mode.`);
   }
 });
 
-// Verify & Check Balance Button
+function resetBalanceDisplay() {
+  cachedBalances = { usdt_free: 0, coin_asset: '', coin_free: 0, coin_value_usdt: 0 };
+  if (usdtWalletHint) usdtWalletHint.textContent = 'USDT Wallet: —';
+  if (statUsdtBalance) statUsdtBalance.textContent = '—';
+  if (statHolding) statHolding.textContent = '—';
+  if (coinBalancePill) coinBalancePill.classList.add('hidden');
+}
+
+// ── Real-Time Spot Wallet Balance Fetcher ──────────────────────────────────────
+async function fetchSpotBalances(optSymbol = null) {
+  const sym = (optSymbol || symbolInput.value).trim().toUpperCase();
+  const key = apiKeyInput.value.trim();
+  const secret = apiSecretInput.value.trim();
+  const isTestnet = currentMode === 'testnet';
+
+  try {
+    const res = await fetch('/api/balance', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        symbol: sym,
+        api_key: key,
+        api_secret: secret,
+        testnet: isTestnet,
+      }),
+    });
+
+    const data = await res.json();
+    if (!res.ok || !data.ok) {
+      if (usdtWalletHint) usdtWalletHint.textContent = 'USDT: (Requires Keys)';
+      return;
+    }
+
+    cachedBalances = data;
+
+    // Update USDT stats
+    if (usdtWalletHint) {
+      usdtWalletHint.textContent = `USDT Wallet: $${fmt(data.usdt_free, 2)}`;
+    }
+    if (statUsdtBalance) {
+      statUsdtBalance.textContent = `$${fmt(data.usdt_free, 2)} USDT`;
+    }
+
+    // Update Coin balance if symbol is present
+    if (sym && data.coin_asset) {
+      if (coinBalancePill && coinBalanceText) {
+        coinBalancePill.classList.remove('hidden');
+        coinBalanceText.innerHTML = `Available: <strong>${fmt(data.coin_free)} ${data.coin_asset}</strong> (~$${fmt(data.coin_value_usdt, 2)})`;
+      }
+      if (statHolding) {
+        statHolding.textContent = `${fmt(data.coin_free)} ${data.coin_asset}`;
+      }
+      if (btnQuickBuy) {
+        btnQuickBuy.style.display = isTestnet ? 'inline-block' : 'none';
+        btnQuickBuy.textContent = `🛒 Buy $50 ${data.coin_asset}`;
+      }
+    } else {
+      if (coinBalancePill) coinBalancePill.classList.add('hidden');
+      if (statHolding) statHolding.textContent = '—';
+    }
+
+  } catch (err) {
+    console.warn('Balance fetch error:', err);
+  }
+}
+
+// Max 100% Button Handler
+if (btnUseMax) {
+  btnUseMax.addEventListener('click', () => {
+    if (cachedBalances.coin_free <= 0) {
+      alert(`You have 0 ${cachedBalances.coin_asset || 'coins'} available in your Spot Wallet to sell.`);
+      return;
+    }
+    if (quantityTypeSelect.value === 'usdt') {
+      const val = cachedBalances.coin_value_usdt > 0 ? cachedBalances.coin_value_usdt.toFixed(2) : (cachedBalances.coin_free * currentPrice).toFixed(2);
+      quantityInput.value = val;
+    } else {
+      quantityInput.value = cachedBalances.coin_free;
+    }
+  });
+}
+
+// Quick Buy Test Coins Button Handler (for Testnet)
+if (btnQuickBuy) {
+  btnQuickBuy.addEventListener('click', async () => {
+    const sym = symbolInput.value.trim().toUpperCase();
+    if (!sym) return;
+    const key = apiKeyInput.value.trim();
+    const secret = apiSecretInput.value.trim();
+    const isTestnet = currentMode === 'testnet';
+
+    btnQuickBuy.disabled = true;
+    btnQuickBuy.textContent = 'Buying $50…';
+
+    try {
+      const res = await fetch('/api/quick-buy', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          symbol: sym,
+          amount_usdt: 50.0,
+          api_key: key,
+          api_secret: secret,
+          testnet: isTestnet,
+        }),
+      });
+
+      const data = await res.json();
+      if (!res.ok || !data.ok) {
+        alert('Quick Buy Error: ' + (data.error || 'Failed to place buy order'));
+      } else {
+        appendLog('success', `🛒 Quick Buy: Bought ${fmt(data.new_balance)} ${data.bought_asset} with $50 Testnet USDT!`);
+        await fetchSpotBalances(sym);
+      }
+    } catch (err) {
+      alert('Network error placing quick buy: ' + err.message);
+    } finally {
+      btnQuickBuy.disabled = false;
+      btnQuickBuy.textContent = `🛒 Buy $50 ${cachedBalances.coin_asset || ''}`;
+    }
+  });
+}
+
+if (refreshBalBtn) {
+  refreshBalBtn.addEventListener('click', () => {
+    fetchSpotBalances();
+    appendLog('info', '🔄 Spot Wallet balances refreshed.');
+  });
+}
+
+// Verify Keys Button
 verifyKeysBtn.addEventListener('click', async () => {
   const key = apiKeyInput.value.trim();
   const secret = apiSecretInput.value.trim();
   const isTestnet = currentMode === 'testnet';
 
   apiVerifyResult.className = 'api-verify-result';
-  apiVerifyResult.textContent = '⏳ Verifying keys with Binance…';
+  apiVerifyResult.textContent = '⏳ Verifying keys & fetching wallet…';
 
   try {
     const res = await fetch('/api/verify-keys', {
@@ -208,13 +366,22 @@ verifyKeysBtn.addEventListener('click', async () => {
 
     apiVerifyResult.className = 'api-verify-result success';
     const tradingBadge = data.can_trade ? '🟢 Trading Enabled' : '🟡 View Only';
+    
+    // Format top holding coins summary
+    const topHoldings = data.balances
+      .map(b => `${b.asset}: ${fmt(b.free)}`)
+      .slice(0, 5)
+      .join(', ');
+
     apiVerifyResult.innerHTML = `
       <strong>✅ Connected Successfully (${data.mode})!</strong><br>
       • Status: ${tradingBadge}<br>
-      • Free USDT Balance: <strong>$${fmt(data.usdt_balance, 2)} USDT</strong>
+      • Free USDT: <strong>$${fmt(data.usdt_balance, 2)} USDT</strong><br>
+      • Top Holdings: <small>${topHoldings || 'None'}</small>
     `;
 
-    appendLog('success', `🔑 [${data.mode}] API Keys Verified! Free Balance: $${fmt(data.usdt_balance, 2)} USDT`);
+    appendLog('success', `🔑 [${data.mode}] API Keys Verified! Free USDT Balance: $${fmt(data.usdt_balance, 2)}`);
+    fetchSpotBalances();
 
   } catch (err) {
     apiVerifyResult.className = 'api-verify-result error';
@@ -326,7 +493,6 @@ function setStatus(status) {
 
 // ── Mode toggle ───────────────────────────────────────────────────────────────
 function setMode(mode) {
-  // Save existing mode keys before switching
   saveKeys(currentMode);
 
   currentMode = mode;
@@ -338,18 +504,17 @@ function setMode(mode) {
   modeBadge.className  = `badge badge-${mode === 'live' ? 'live' : 'testnet'}`;
   modeBadge.textContent = mode === 'live' ? 'LIVE' : 'TESTNET';
 
-  // Load new mode credentials
   loadSavedKeys(mode);
 
-  // Clear previous verification result chip
   apiVerifyResult.className = 'api-verify-result hidden';
   apiVerifyResult.textContent = '';
+  fetchSpotBalances();
 }
 
 btnTestnet.addEventListener('click', () => setMode('testnet'));
 btnLive.addEventListener('click',    () => setMode('live'));
 
-// ── Price check button ────────────────────────────────────────────────────────
+// ── Price & Balance check button ──────────────────────────────────────────────
 checkPriceBtn.addEventListener('click', async () => {
   const sym = symbolInput.value.trim().toUpperCase();
   if (!sym) return;
@@ -364,8 +529,15 @@ checkPriceBtn.addEventListener('click', async () => {
       currentPriceHint.textContent = `Current price: ${fmt(data.price)} USDT`;
       statPrice.textContent = fmt(data.price);
     }
+    fetchSpotBalances(sym);
   } catch (e) {
     currentPriceHint.textContent = '⚠ Network error';
+  }
+});
+
+symbolInput.addEventListener('blur', () => {
+  if (symbolInput.value.trim()) {
+    fetchSpotBalances(symbolInput.value.trim());
   }
 });
 
@@ -488,7 +660,6 @@ botForm.addEventListener('submit', async (e) => {
       return;
     }
 
-    // Save active keys
     saveKeys(currentMode);
 
     // Update UI state
@@ -514,6 +685,7 @@ botForm.addEventListener('submit', async (e) => {
 stopBtn.addEventListener('click', async () => {
   await fetch('/api/stop', { method: 'POST' });
   setStatus('idle');
+  fetchSpotBalances();
 });
 
 // ── Triggered overlay ─────────────────────────────────────────────────────────
@@ -531,6 +703,7 @@ overlayCloseBtn.addEventListener('click', () => {
 // ── Socket.IO event handlers ───────────────────────────────────────────────────
 socket.on('connect', () => {
   appendLog('info', '🔌 Connected to dashboard server.');
+  fetchSpotBalances();
 });
 
 socket.on('disconnect', () => {
@@ -545,6 +718,7 @@ socket.on('price_update', ({ symbol, price, target }) => {
 socket.on('price_drop_alert', (payload) => {
   if (payload.event === 'AUTO_CONVERT_SUCCESS') {
     appendLog('success', `🔄 AUTO-CONVERT COMPLETE! Sold ${payload.symbol} -> Bought ${payload.bought_quantity} ${payload.converted_to_symbol} (+${payload.top_gainer_4h_gain_pct}% 4H Gainer)!`);
+    fetchSpotBalances(payload.converted_to_symbol);
   } else {
     appendLog('warning', `🚨 PRICE DROP ALERT: ${payload.symbol} dropped ${payload.actual_drop_percentage}% to $${fmt(payload.current_price)}.`);
   }
@@ -587,6 +761,7 @@ socket.on('bot_status', ({ status, config }) => {
 
   if (status === 'triggered') {
     showTriggered();
+    fetchSpotBalances();
   }
 });
 

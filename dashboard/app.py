@@ -134,10 +134,102 @@ def api_verify_keys():
             "ok": True,
             "can_trade": can_trade,
             "usdt_balance": usdt_balance,
-            "balances": balances[:15],
+            "balances": balances[:25],
             "mode": "Testnet" if testnet else "Live",
         })
     except Exception as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
+
+
+@app.route("/api/balance", methods=["POST"])
+def api_balance():
+    """Fetch real-time spot wallet balances for USDT and a target symbol."""
+    data = request.get_json(force=True)
+    api_key = str(data.get("api_key", "")).strip()
+    api_secret = str(data.get("api_secret", "")).strip()
+    testnet = bool(data.get("testnet", True))
+    symbol = str(data.get("symbol", "")).strip().upper()
+
+    try:
+        client = get_client(testnet=testnet, api_key=api_key, api_secret=api_secret)
+        account_info = client.get_account()
+        
+        balances_map = {b["asset"]: float(b.get("free", 0)) for b in account_info.get("balances", [])}
+        usdt_free = balances_map.get("USDT", 0.0)
+
+        coin_asset = ""
+        coin_free = 0.0
+        coin_value_usdt = 0.0
+        current_price = 0.0
+
+        if symbol:
+            try:
+                info = get_symbol_info(client, symbol)
+                coin_asset = info.get("baseAsset", symbol.replace("USDT", ""))
+            except Exception:
+                coin_asset = symbol.replace("USDT", "")
+
+            coin_free = balances_map.get(coin_asset, 0.0)
+            try:
+                current_price = get_current_price(symbol, client=client)
+                coin_value_usdt = coin_free * current_price
+            except Exception:
+                pass
+
+        # Return list of non-zero assets
+        non_zero = []
+        for b in account_info.get("balances", []):
+            f = float(b.get("free", 0))
+            l = float(b.get("locked", 0))
+            if f > 0 or l > 0:
+                non_zero.append({"asset": b["asset"], "free": f, "locked": l})
+
+        return jsonify({
+            "ok": True,
+            "usdt_free": usdt_free,
+            "coin_asset": coin_asset,
+            "coin_free": coin_free,
+            "coin_value_usdt": coin_value_usdt,
+            "current_price": current_price,
+            "all_balances": non_zero[:20],
+        })
+    except Exception as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
+
+
+@app.route("/api/quick-buy", methods=["POST"])
+def api_quick_buy():
+    """Place a quick market buy order using spot USDT (helpful for testnet & funding)."""
+    data = request.get_json(force=True)
+    api_key = str(data.get("api_key", "")).strip()
+    api_secret = str(data.get("api_secret", "")).strip()
+    testnet = bool(data.get("testnet", True))
+    symbol = str(data.get("symbol", "")).strip().upper()
+    quote_amount = float(data.get("amount_usdt", 50.0))
+
+    if not symbol:
+        return jsonify({"error": "Symbol is required"}), 400
+    if quote_amount <= 0:
+        return jsonify({"error": "Amount must be > 0"}), 400
+
+    try:
+        client = get_client(testnet=testnet, api_key=api_key, api_secret=api_secret)
+        order = place_market_buy_quote(client, symbol, quote_amount)
+        _push_log("success", f"🛒 Quick Buy: Spent ${quote_amount:.2f} USDT to buy {symbol} | Order ID={order.get('orderId')}")
+        
+        # Fetch updated balance
+        base_asset = symbol.replace("USDT", "")
+        bal_info = client.get_asset_balance(asset=base_asset)
+        free_qty = float(bal_info.get("free", 0)) if bal_info else 0.0
+
+        return jsonify({
+            "ok": True,
+            "order": order,
+            "bought_asset": base_asset,
+            "new_balance": free_qty,
+        })
+    except Exception as exc:
+        _push_log("error", f"❌ Quick Buy Failed for {symbol}: {exc}")
         return jsonify({"ok": False, "error": str(exc)}), 400
 
 
