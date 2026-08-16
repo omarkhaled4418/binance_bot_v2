@@ -513,7 +513,15 @@ async function populateConvertAllAssets() {
       }),
     });
 
-    const data = await res.json();
+    const text = await res.text();
+    let data;
+    try {
+      data = JSON.parse(text);
+    } catch {
+      convertAllAssetsList.innerHTML = '<span class="wallet-hint">Failed to fetch wallet (invalid response).</span>';
+      return;
+    }
+
     if (!res.ok || !data.ok || !data.balances || !data.balances.length) {
       convertAllAssetsList.innerHTML = '<span class="wallet-hint">No non-zero spot coin holdings found.</span>';
       return;
@@ -521,10 +529,15 @@ async function populateConvertAllAssets() {
 
     cachedBalances.all_balances = data.balances;
     const targetAsset = convertAllTargetAsset.value;
-    const filtered = data.balances.filter(b => b.asset !== targetAsset && b.free > 0);
+    // Filter out target asset, 0 balance, and non-alphanumeric dummy test coins
+    const filtered = data.balances.filter(b => {
+      const sym = b.asset.toUpperCase();
+      const isAlphanumeric = /^[A-Z0-9]+$/.test(sym);
+      return sym !== targetAsset && b.free > 0 && isAlphanumeric;
+    });
 
     if (!filtered.length) {
-      convertAllAssetsList.innerHTML = `<span class="wallet-hint">No other coins found to convert to ${targetAsset}.</span>`;
+      convertAllAssetsList.innerHTML = `<span class="wallet-hint">No other tradable coins found to convert to ${targetAsset}.</span>`;
       return;
     }
 
@@ -589,7 +602,13 @@ if (modalConvertAllForm) {
         }),
       });
 
-      const data = await res.json();
+      const text = await res.text();
+      let data;
+      try {
+        data = JSON.parse(text);
+      } catch (parseErr) {
+        throw new Error('Server returned an invalid response (non-JSON error). Please check your connection and API keys.');
+      }
 
       if (!res.ok || !data.ok) {
         modalConvertAllStatus.className = 'api-verify-result error';
@@ -608,7 +627,7 @@ if (modalConvertAllForm) {
       }
     } catch (err) {
       modalConvertAllStatus.className = 'api-verify-result error';
-      modalConvertAllStatus.textContent = '❌ Network error: ' + err.message;
+      modalConvertAllStatus.textContent = '❌ ' + err.message;
     } finally {
       modalConvertAllSubmitBtn.disabled = false;
       modalConvertAllSubmitBtn.innerHTML = '<span class="btn-icon">🧹</span> Convert All Coins Now';

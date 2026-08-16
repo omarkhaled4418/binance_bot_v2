@@ -351,6 +351,13 @@ def api_convert_all():
         account_info = client.get_account()
         balances = account_info.get("balances", [])
 
+        # Fetch exchange info once to lookup active pairs instantly
+        exchange_info = client.get_exchange_info()
+        tradable_symbols = {
+            s["symbol"]: s for s in exchange_info.get("symbols", []) 
+            if s.get("status") == "TRADING"
+        }
+
         # Filter assets with free balance > 0 and not equal to target_asset
         sellable_assets = [
             b for b in balances 
@@ -360,7 +367,7 @@ def api_convert_all():
         if not sellable_assets:
             return jsonify({"ok": True, "message": f"No other coins found to convert to {target_asset}.", "results": []})
 
-        _push_log("warning", f"🧹 CONVERT ALL INITIATED: Converting {len(sellable_assets)} spot coins to {target_asset} …")
+        _push_log("warning", f"🧹 CONVERT ALL INITIATED: Converting {len(sellable_assets)} spot assets to {target_asset} …")
 
         results = []
         total_proceeds_usdt = 0.0
@@ -369,30 +376,37 @@ def api_convert_all():
             asset = item["asset"].upper()
             free_qty = float(item["free"])
 
-            # 1. Determine trading pair to sell to USDT first or direct to target_asset
+            # Skip non-standard or dummy testnet asset names
+            if not asset.isalnum() or any(ord(c) > 127 for c in asset):
+                log.info(f"Skipping non-standard asset: {asset}")
+                results.append({"asset": asset, "status": "skipped", "reason": "Non-standard/Test coin"})
+                continue
+
+            # Determine trading pair
             direct_pair = f"{asset}{target_asset}"
             usdt_pair = f"{asset}USDT"
 
             pair_to_sell = ""
-            try:
-                get_symbol_info(client, direct_pair)
+            if direct_pair in tradable_symbols:
                 pair_to_sell = direct_pair
-            except Exception:
-                try:
-                    get_symbol_info(client, usdt_pair)
-                    pair_to_sell = usdt_pair
-                except Exception:
-                    pair_to_sell = ""
+            elif usdt_pair in tradable_symbols:
+                pair_to_sell = usdt_pair
 
             if not pair_to_sell:
-                _push_log("warning", f"⚠️ Skipped {asset}: No active spot trading pair found.")
-                results.append({"asset": asset, "status": "skipped", "reason": "No pair found"})
+                _push_log("warning", f"⚠️ Skipped {asset}: No active spot trading pair found on Binance.")
+                results.append({"asset": asset, "status": "skipped", "reason": "No trading pair"})
                 continue
 
             try:
                 sell_res = place_market_sell(client, pair_to_sell, free_qty)
-                proceeds = float(sell_res.get("cummulativeQuoteQty", 0.0))
-                _push_log("success", f"✅ Sold {free_qty} {asset} via {pair_to_sell} (Proceeds: {proceeds:.2f} {pair_to_sell.replace(asset, '')})")
+                proceeds = 0.0
+                try:
+                    proceeds = float(sell_res.get("cummulativeQuoteQty", 0.0))
+                except (ValueError, TypeError):
+                    pass
+
+                quote_sym = pair_to_sell.replace(asset, "")
+                _push_log("success", f"✅ Sold {free_qty} {asset} via {pair_to_sell} (Proceeds: {proceeds:.2f} {quote_sym})")
                 results.append({
                     "asset": asset,
                     "status": "sold",
@@ -409,12 +423,13 @@ def api_convert_all():
         # If target_asset is NOT USDT and we have USDT proceeds (e.g. converting everything to BTC), buy target_asset with USDT
         if target_asset != "USDT" and total_proceeds_usdt >= 5.0:
             target_usdt_pair = f"{target_asset}USDT"
-            try:
-                _push_log("info", f"🔄 Buying {target_asset} with accumulated ${total_proceeds_usdt:.2f} USDT proceeds …")
-                buy_res = place_market_buy_quote(client, target_usdt_pair, total_proceeds_usdt)
-                _push_log("success", f"🏆 Purchased {buy_res.get('executedQty')} {target_asset}!")
-            except Exception as buy_e:
-                _push_log("error", f"❌ Failed to buy {target_asset} with USDT proceeds: {buy_e}")
+            if target_usdt_pair in tradable_symbols:
+                try:
+                    _push_log("info", f"🔄 Buying {target_asset} with accumulated ${total_proceeds_usdt:.2f} USDT proceeds …")
+                    buy_res = place_market_buy_quote(client, target_usdt_pair, total_proceeds_usdt)
+                    _push_log("success", f"🏆 Purchased {buy_res.get('executedQty')} {target_asset}!")
+                except Exception as buy_e:
+                    _push_log("error", f"❌ Failed to buy {target_asset} with USDT proceeds: {buy_e}")
 
         # Fetch updated target asset balance
         target_bal_info = client.get_asset_balance(asset=target_asset)
