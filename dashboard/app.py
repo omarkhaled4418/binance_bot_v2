@@ -676,11 +676,12 @@ def api_start():
                     _session_traded_symbols.clear()
                     _session_traded_symbols.add(sym)
 
-                _push_log("warning", f"🔄 Auto-Convert Enabled: Scanning for Top 4H Gainer coin on Binance (Excluding {list(_session_traded_symbols)}) …")
+                _push_log("warning", f"🔄 Auto-Convert Enabled: Scanning for Top Momentum coin on Binance (≥ +2% in last 1H, excluding {list(_session_traded_symbols)}) …")
                 try:
                     top_gainer = find_top_gainer_4h(client=client, exclude_symbols=_session_traded_symbols)
                     top_sym = top_gainer["symbol"]
                     top_gain_pct = top_gainer["gain_4h_pct"]
+                    top_gain_1h_pct = top_gainer.get("gain_1h_pct", 0)
                     top_price = top_gainer["current_price"]
                     _session_traded_symbols.add(top_sym)
 
@@ -693,7 +694,7 @@ def api_start():
                         _session_traded_symbols.clear()
                         _session_traded_symbols.add(top_sym)
 
-                    _push_log("info", f"🏆 Found Top 4H Gainer: {top_sym} (+{top_gain_pct}% 4H gain)")
+                    _push_log("info", f"🏆 Found Top Momentum Coin: {top_sym} (+{top_gain_1h_pct}% in 1H, +{top_gain_pct}% in 4H)")
 
                     _push_log("warning", f"💸 Executing Conversion: Selling {current_qty} {sym} → Buying {top_sym} …")
                     conversion = convert_coin_to_top_gainer(

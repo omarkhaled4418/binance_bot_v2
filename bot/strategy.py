@@ -24,23 +24,28 @@ _EXCLUDED_PAIRS = {
 def find_top_gainer_4h(
     client: Client | None = None,
     exclude_symbols: str | set[str] | list[str] = "",
-    min_volume_usdt: float = 500_000.0,
-    top_candidates_count: int = 30,
+    min_volume_usdt: float = 250_000.0,
+    min_1h_gain_pct: float = 2.0,
+    top_candidates_count: int = 50,
 ) -> dict:
     """
-    Find the coin with the highest percentage price gain over the last 4 hours.
-    Skips any symbols in exclude_symbols to prevent re-buying the current or recently traded coin.
+    Find the coin with the highest percentage price gain over the last 4 hours,
+    requiring AT LEAST +2% price increase in the last 1 hour.
+    Skips any symbols that haven't increased by at least 2% in the last hour,
+    and skips any symbols in exclude_symbols.
 
     Args:
         client:               Optional authenticated Binance client.
         exclude_symbols:      Symbol or collection of symbols to exclude.
         min_volume_usdt:      Minimum 24h quote volume in USDT to ensure liquidity.
-        top_candidates_count: Number of top volume pairs to scan 4h klines for.
+        min_1h_gain_pct:      Minimum required price increase in the last 1 hour (default: 2.0%).
+        top_candidates_count: Number of candidates to scan klines for.
 
     Returns:
         dict: {
             "symbol": str,
             "gain_4h_pct": float,
+            "gain_1h_pct": float,
             "current_price": float,
             "open_4h_price": float,
             "quote_volume_24h": float
@@ -51,7 +56,9 @@ def find_top_gainer_4h(
     else:
         excluded_set = {s.strip().upper() for s in exclude_symbols if s}
 
-    log.info(f"[Strategy] Scanning Binance market for Top 4H Gainer (excluding {excluded_set}) …")
+    log.info(
+        f"[Strategy] Scanning Binance market for Top Gainer (Minimum 1H Gain ≥ +{min_1h_gain_pct}%, excluding {excluded_set}) …"
+    )
 
     # 1. Fetch 24h tickers to filter liquid USDT pairs
     try:
@@ -71,56 +78,103 @@ def find_top_gainer_4h(
             continue
         try:
             quote_vol = float(t.get("quoteVolume", 0))
-            if quote_vol >= min_volume_usdt:
+            price_change_pct = float(t.get("priceChangePercent", 0))
+            if quote_vol >= min_volume_usdt and price_change_pct > 0:
                 candidates.append({
                     "symbol": sym,
                     "quote_volume_24h": quote_vol,
+                    "price_change_24h": price_change_pct,
                 })
         except (ValueError, TypeError):
             continue
 
     if not candidates:
-        raise ValueError("No eligible USDT trading pairs found matching volume criteria.")
+        raise ValueError("No eligible USDT trading pairs found matching volume and positive gain criteria.")
 
-    # Sort candidates by 24h volume descending to check top liquid coins
-    candidates.sort(key=lambda x: x["quote_volume_24h"], reverse=True)
+    # Sort candidates by 24h price change and volume
+    candidates.sort(key=lambda x: (x["price_change_24h"], x["quote_volume_24h"]), reverse=True)
     top_candidates = candidates[:top_candidates_count]
 
-    # 2. Query 1h klines (limit=5) to calculate exact 4h price gain
+    # 2. Query 1h klines (limit=6) to calculate exact 4h and 1h price gains
     gainer_results = []
     for c in top_candidates:
         sym = c["symbol"]
         try:
             k_resp = http_requests.get(
                 _KLINES_URL,
-                params={"symbol": sym, "interval": "1h", "limit": 5},
+                params={"symbol": sym, "interval": "1h", "limit": 6},
                 timeout=5,
             )
             k_resp.raise_for_status()
             klines = k_resp.json()
             if len(klines) >= 5:
-                open_4h_ago = float(klines[-5][1])   # Open price of candle 4h ago
+                open_4h_ago = float(klines[-5][1])   # Open price 4h ago
+                open_1h_ago = float(klines[-2][1])   # Open price 1h ago
                 current_close = float(klines[-1][4]) # Current price
-                if open_4h_ago > 0:
+
+                if open_4h_ago > 0 and open_1h_ago > 0:
                     gain_4h_pct = ((current_close - open_4h_ago) / open_4h_ago) * 100.0
+                    gain_1h_pct = ((current_close - open_1h_ago) / open_1h_ago) * 100.0
+
+                    # Check 1-hour minimum gain filter
+                    if gain_1h_pct < min_1h_gain_pct:
+                        log.debug(
+                            f"[Strategy] Skipping {sym}: 1H gain (+{gain_1h_pct:.2f}%) < required +{min_1h_gain_pct}%"
+                        )
+                        continue
+
                     gainer_results.append({
                         "symbol": sym,
                         "gain_4h_pct": round(gain_4h_pct, 2),
+                        "gain_1h_pct": round(gain_1h_pct, 2),
                         "current_price": current_close,
                         "open_4h_price": open_4h_ago,
                         "quote_volume_24h": c["quote_volume_24h"],
                     })
         except Exception as exc:
-            log.warning(f"[Strategy] Could not fetch 4H klines for {sym}: {exc}")
+            log.warning(f"[Strategy] Could not fetch klines for {sym}: {exc}")
             continue
 
     if not gainer_results:
-        raise ValueError("Failed to calculate 4H gains for market candidates.")
+        log.warning(
+            f"[Strategy] No coins met the strict +{min_1h_gain_pct}% 1H gain threshold. Falling back to highest 1H gainer above 0% …"
+        )
+        # Fallback: find best positive 1h gainer if none met +2%
+        for c in top_candidates[:20]:
+            sym = c["symbol"]
+            try:
+                k_resp = http_requests.get(
+                    _KLINES_URL,
+                    params={"symbol": sym, "interval": "1h", "limit": 6},
+                    timeout=5,
+                )
+                k_resp.raise_for_status()
+                klines = k_resp.json()
+                if len(klines) >= 5:
+                    open_4h_ago = float(klines[-5][1])
+                    open_1h_ago = float(klines[-2][1])
+                    current_close = float(klines[-1][4])
+                    if open_4h_ago > 0 and open_1h_ago > 0:
+                        gain_4h_pct = ((current_close - open_4h_ago) / open_4h_ago) * 100.0
+                        gain_1h_pct = ((current_close - open_1h_ago) / open_1h_ago) * 100.0
+                        gainer_results.append({
+                            "symbol": sym,
+                            "gain_4h_pct": round(gain_4h_pct, 2),
+                            "gain_1h_pct": round(gain_1h_pct, 2),
+                            "current_price": current_close,
+                            "open_4h_price": open_4h_ago,
+                            "quote_volume_24h": c["quote_volume_24h"],
+                        })
+            except Exception:
+                continue
 
-    # Sort candidates by 4h gain percentage descending
-    gainer_results.sort(key=lambda x: x["gain_4h_pct"], reverse=True)
+    if not gainer_results:
+        raise ValueError(f"No suitable gainers found on Binance USDT market.")
 
-    # Pick the top gainer that is NOT in the excluded set
+    # Sort candidates by 1h gain and 4h gain
+    gainer_results.sort(key=lambda x: (x["gain_1h_pct"], x["gain_4h_pct"]), reverse=True)
+
+    # Pick the top candidate not in excluded_set
     top_gainer = None
     for res in gainer_results:
         if res["symbol"] not in excluded_set:
@@ -128,11 +182,11 @@ def find_top_gainer_4h(
             break
 
     if not top_gainer:
-        top_gainer = gainer_results[0]  # Fallback to #1 in list if all excluded
+        top_gainer = gainer_results[0]
 
     log.info(
-        f"[Strategy] 🏆 Top 4H Gainer Found: {top_gainer['symbol']} "
-        f"(+{top_gainer['gain_4h_pct']}% 4H gain, Current: ${top_gainer['current_price']})"
+        f"[Strategy] 🏆 Top Momentum Coin Selected: {top_gainer['symbol']} "
+        f"(1H Gain: +{top_gainer['gain_1h_pct']}%, 4H Gain: +{top_gainer['gain_4h_pct']}%, Price: ${top_gainer['current_price']})"
     )
 
     return top_gainer
