@@ -40,6 +40,49 @@
   <!-- LEFT COLUMN -->
   <aside class="sidebar">
 
+    <!-- API Credentials Card -->
+    <div class="card" id="api-card">
+      <div class="card-header-row">
+        <div class="card-title">
+          <span class="card-icon">🔑</span> API Credentials
+        </div>
+        <button type="button" id="toggle-api-card-btn" class="btn-ghost-sm" title="Toggle API keys view">
+          Collapse ▲
+        </button>
+      </div>
+
+      <div id="api-card-body" class="api-body">
+        <div class="form-group">
+          <div class="label-row">
+            <label class="form-label" id="api-key-label" for="api-key">Binance API Key</label>
+            <span class="secure-badge" title="Keys are stored securely only in your browser localStorage">🔒 Local Only</span>
+          </div>
+          <input type="text" id="api-key" class="form-input font-mono" placeholder="Paste your API key here…" autocomplete="off" spellcheck="false" />
+        </div>
+
+        <div class="form-group">
+          <div class="label-row">
+            <label class="form-label" id="api-secret-label" for="api-secret">Binance API Secret</label>
+            <button type="button" id="toggle-secret-btn" class="btn-ghost-sm" title="Toggle Secret Visibility">
+              👁️ Show
+            </button>
+          </div>
+          <input type="password" id="api-secret" class="form-input font-mono" placeholder="Paste your API secret here…" autocomplete="off" spellcheck="false" />
+        </div>
+
+        <div class="api-actions-row">
+          <button type="button" id="verify-keys-btn" class="btn btn-secondary-sm">
+            <span class="btn-icon">⚡</span> Verify & Check Balance
+          </button>
+          <button type="button" id="clear-keys-btn" class="btn-ghost-sm" title="Clear saved keys from this browser">
+            🗑️ Clear
+          </button>
+        </div>
+
+        <div id="api-verify-result" class="api-verify-result hidden"></div>
+      </div>
+    </div>
+
     <!-- Config card -->
     <div class="card" id="config-card">
       <div class="card-title">

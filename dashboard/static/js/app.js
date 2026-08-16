@@ -1,5 +1,5 @@
 /* ═══════════════════════════════════════════════════════════════════
-   Binance Sell Bot – Frontend Logic
+   Binance Sell Bot – Frontend Logic with Client-Side Credentials
    ═══════════════════════════════════════════════════════════════════ */
 
 // ── Socket.IO connection ─────────────────────────────────────────────────────
@@ -12,6 +12,20 @@ const botForm          = document.getElementById('bot-form');
 const btnTestnet       = document.getElementById('btn-testnet');
 const btnLive          = document.getElementById('btn-live');
 const modeInput        = document.getElementById('mode-input');
+
+// API Credentials refs
+const apiKeyInput      = document.getElementById('api-key');
+const apiSecretInput   = document.getElementById('api-secret');
+const apiKeyLabel      = document.getElementById('api-key-label');
+const apiSecretLabel   = document.getElementById('api-secret-label');
+const toggleSecretBtn  = document.getElementById('toggle-secret-btn');
+const toggleApiCardBtn = document.getElementById('toggle-api-card-btn');
+const apiCardBody      = document.getElementById('api-card-body');
+const verifyKeysBtn    = document.getElementById('verify-keys-btn');
+const clearKeysBtn     = document.getElementById('clear-keys-btn');
+const apiVerifyResult  = document.getElementById('api-verify-result');
+
+// Trading form refs
 const symbolInput      = document.getElementById('symbol');
 const targetTypeSelect = document.getElementById('target-type');
 const targetLabel      = document.getElementById('target-label');
@@ -31,6 +45,35 @@ const startBtn         = document.getElementById('start-btn');
 const stopBtn          = document.getElementById('stop-btn');
 const formError        = document.getElementById('form-error');
 
+// Stat & chart refs
+const statPrice        = document.getElementById('stat-price');
+const statTarget       = document.getElementById('stat-target');
+const statDistance     = document.getElementById('stat-distance');
+const statAmount       = document.getElementById('stat-amount');
+
+const chartSymbolLabel = document.getElementById('chart-symbol');
+const chartPlaceholder = document.getElementById('chart-placeholder');
+const targetIndicator  = document.getElementById('target-indicator');
+const targetIndicatorV = document.getElementById('target-indicator-value');
+
+const logBody          = document.getElementById('log-body');
+const clearLogBtn      = document.getElementById('clear-log-btn');
+
+const triggeredOverlay = document.getElementById('triggered-overlay');
+const overlayDesc      = document.getElementById('overlay-desc');
+const overlayCloseBtn  = document.getElementById('overlay-close-btn');
+
+// ── State ─────────────────────────────────────────────────────────────────────
+let currentMode   = 'testnet';  // 'testnet' | 'live'
+let botStatus     = 'idle';     // 'idle' | 'running' | 'triggered' | 'error'
+let priceHistory  = [];         // { time, price }[]
+let targetPrice   = 0;
+let currentPrice  = 0;
+let configSymbol  = '';
+
+const MAX_PRICE_POINTS = 120;   // keep last 120 ticks on chart
+
+// ── Target & Quantity Select toggles ──────────────────────────────────────────
 targetTypeSelect.addEventListener('change', () => {
   if (targetTypeSelect.value === 'percentage') {
     targetLabel.textContent = 'Target Profit (%)';
@@ -55,31 +98,129 @@ quantityTypeSelect.addEventListener('change', () => {
   }
 });
 
-const statPrice        = document.getElementById('stat-price');
-const statTarget       = document.getElementById('stat-target');
-const statDistance     = document.getElementById('stat-distance');
-const statAmount       = document.getElementById('stat-amount');
+// ── API Key Local Storage Management ──────────────────────────────────────────
+function getStorageKeys(mode) {
+  return {
+    keyName: mode === 'live' ? 'binance_live_api_key' : 'binance_testnet_api_key',
+    secretName: mode === 'live' ? 'binance_live_api_secret' : 'binance_testnet_api_secret',
+  };
+}
 
-const chartSymbolLabel = document.getElementById('chart-symbol');
-const chartPlaceholder = document.getElementById('chart-placeholder');
-const targetIndicator  = document.getElementById('target-indicator');
-const targetIndicatorV = document.getElementById('target-indicator-value');
+function loadSavedKeys(mode) {
+  const { keyName, secretName } = getStorageKeys(mode);
+  apiKeyInput.value = localStorage.getItem(keyName) || '';
+  apiSecretInput.value = localStorage.getItem(secretName) || '';
+  
+  if (apiKeyLabel) {
+    apiKeyLabel.textContent = mode === 'live' ? 'Live Binance API Key' : 'Testnet Binance API Key';
+  }
+  if (apiSecretLabel) {
+    apiSecretLabel.textContent = mode === 'live' ? 'Live Binance API Secret' : 'Testnet Binance API Secret';
+  }
 
-const logBody          = document.getElementById('log-body');
-const clearLogBtn      = document.getElementById('clear-log-btn');
+  // Load saved n8n webhook URL
+  const savedWebhook = localStorage.getItem('n8n_webhook_url');
+  if (savedWebhook && !n8nWebhookUrlInput.value) {
+    n8nWebhookUrlInput.value = savedWebhook;
+  }
+}
 
-const triggeredOverlay = document.getElementById('triggered-overlay');
-const overlayDesc      = document.getElementById('overlay-desc');
-const overlayCloseBtn  = document.getElementById('overlay-close-btn');
+function saveKeys(mode) {
+  const { keyName, secretName } = getStorageKeys(mode);
+  if (apiKeyInput.value.trim()) {
+    localStorage.setItem(keyName, apiKeyInput.value.trim());
+  } else {
+    localStorage.removeItem(keyName);
+  }
 
-// ── State ─────────────────────────────────────────────────────────────────────
-let currentMode   = 'testnet';  // 'testnet' | 'live'
-let botStatus     = 'idle';     // 'idle' | 'running' | 'triggered' | 'error'
-let priceHistory  = [];         // { time, price }[]
-let targetPrice   = 0;
-let configSymbol  = '';
+  if (apiSecretInput.value.trim()) {
+    localStorage.setItem(secretName, apiSecretInput.value.trim());
+  } else {
+    localStorage.removeItem(secretName);
+  }
+}
 
-const MAX_PRICE_POINTS = 120;   // keep last 120 ticks on chart
+apiKeyInput.addEventListener('input', () => saveKeys(currentMode));
+apiSecretInput.addEventListener('input', () => saveKeys(currentMode));
+
+n8nWebhookUrlInput.addEventListener('input', () => {
+  localStorage.setItem('n8n_webhook_url', n8nWebhookUrlInput.value.trim());
+});
+
+// Toggle Secret Visibility
+toggleSecretBtn.addEventListener('click', () => {
+  if (apiSecretInput.type === 'password') {
+    apiSecretInput.type = 'text';
+    toggleSecretBtn.textContent = '🔒 Hide';
+  } else {
+    apiSecretInput.type = 'password';
+    toggleSecretBtn.textContent = '👁️ Show';
+  }
+});
+
+// Collapse/Expand API Card
+toggleApiCardBtn.addEventListener('click', () => {
+  const isHidden = apiCardBody.style.display === 'none';
+  apiCardBody.style.display = isHidden ? 'block' : 'none';
+  toggleApiCardBtn.textContent = isHidden ? 'Collapse ▲' : 'Expand ▼';
+});
+
+// Clear Keys Button
+clearKeysBtn.addEventListener('click', () => {
+  if (confirm(`Clear saved credentials for ${currentMode.toUpperCase()} mode?`)) {
+    const { keyName, secretName } = getStorageKeys(currentMode);
+    localStorage.removeItem(keyName);
+    localStorage.removeItem(secretName);
+    apiKeyInput.value = '';
+    apiSecretInput.value = '';
+    apiVerifyResult.className = 'api-verify-result hidden';
+    apiVerifyResult.textContent = '';
+    appendLog('info', `🗑️ Cleared saved credentials for ${currentMode.toUpperCase()} mode.`);
+  }
+});
+
+// Verify & Check Balance Button
+verifyKeysBtn.addEventListener('click', async () => {
+  const key = apiKeyInput.value.trim();
+  const secret = apiSecretInput.value.trim();
+  const isTestnet = currentMode === 'testnet';
+
+  apiVerifyResult.className = 'api-verify-result';
+  apiVerifyResult.textContent = '⏳ Verifying keys with Binance…';
+
+  try {
+    const res = await fetch('/api/verify-keys', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        api_key: key,
+        api_secret: secret,
+        testnet: isTestnet,
+      }),
+    });
+
+    const data = await res.json();
+    if (!res.ok || !data.ok) {
+      apiVerifyResult.className = 'api-verify-result error';
+      apiVerifyResult.innerHTML = `<strong>❌ Connection Failed:</strong><br>${data.error || 'Invalid API Key or Secret'}`;
+      return;
+    }
+
+    apiVerifyResult.className = 'api-verify-result success';
+    const tradingBadge = data.can_trade ? '🟢 Trading Enabled' : '🟡 View Only';
+    apiVerifyResult.innerHTML = `
+      <strong>✅ Connected Successfully (${data.mode})!</strong><br>
+      • Status: ${tradingBadge}<br>
+      • Free USDT Balance: <strong>$${fmt(data.usdt_balance, 2)} USDT</strong>
+    `;
+
+    appendLog('success', `🔑 [${data.mode}] API Keys Verified! Free Balance: $${fmt(data.usdt_balance, 2)} USDT`);
+
+  } catch (err) {
+    apiVerifyResult.className = 'api-verify-result error';
+    apiVerifyResult.textContent = '❌ Network error verifying keys: ' + err.message;
+  }
+});
 
 // ── Chart.js setup ────────────────────────────────────────────────────────────
 const ctx = document.getElementById('price-chart').getContext('2d');
@@ -185,6 +326,9 @@ function setStatus(status) {
 
 // ── Mode toggle ───────────────────────────────────────────────────────────────
 function setMode(mode) {
+  // Save existing mode keys before switching
+  saveKeys(currentMode);
+
   currentMode = mode;
   modeInput.value = mode;
 
@@ -193,6 +337,13 @@ function setMode(mode) {
 
   modeBadge.className  = `badge badge-${mode === 'live' ? 'live' : 'testnet'}`;
   modeBadge.textContent = mode === 'live' ? 'LIVE' : 'TESTNET';
+
+  // Load new mode credentials
+  loadSavedKeys(mode);
+
+  // Clear previous verification result chip
+  apiVerifyResult.className = 'api-verify-result hidden';
+  apiVerifyResult.textContent = '';
 }
 
 btnTestnet.addEventListener('click', () => setMode('testnet'));
@@ -204,13 +355,14 @@ checkPriceBtn.addEventListener('click', async () => {
   if (!sym) return;
   currentPriceHint.textContent = 'Fetching…';
   try {
-    const isTestnet = currentMode === 'testnet';
-    const res = await fetch(`/api/price?symbol=${sym}&testnet=${isTestnet}`);
+    const res = await fetch(`/api/price?symbol=${sym}`);
     const data = await res.json();
     if (data.error) {
       currentPriceHint.textContent = '⚠ ' + data.error;
     } else {
+      currentPrice = data.price;
       currentPriceHint.textContent = `Current price: ${fmt(data.price)} USDT`;
+      statPrice.textContent = fmt(data.price);
     }
   } catch (e) {
     currentPriceHint.textContent = '⚠ Network error';
@@ -235,6 +387,7 @@ clearLogBtn.addEventListener('click', () => {
 
 // ── Chart updater ─────────────────────────────────────────────────────────────
 function pushPrice(price) {
+  currentPrice = price;
   const timeLabel = now();
   priceHistory.push({ time: timeLabel, price });
 
@@ -279,6 +432,8 @@ botForm.addEventListener('submit', async (e) => {
   const autoConvert = autoConvertSelect.value === 'true';
   const autoRestart = autoRestartSelect.value === 'true';
   const isTestnet = currentMode === 'testnet';
+  const key    = apiKeyInput.value.trim();
+  const secret = apiSecretInput.value.trim();
 
   if (!symbol)       return showError('Please enter a coin symbol (e.g. BTCUSDT).');
   if (isNaN(tp) || tp <= 0) return showError('Enter a valid target price or percentage > 0.');
@@ -319,6 +474,8 @@ botForm.addEventListener('submit', async (e) => {
         auto_convert: autoConvert,
         auto_restart_on_trigger: autoRestart,
         testnet: isTestnet,
+        api_key: key,
+        api_secret: secret,
       }),
     });
 
@@ -330,6 +487,9 @@ botForm.addEventListener('submit', async (e) => {
       startBtn.innerHTML = '<span class="btn-icon">▶</span> Start Bot';
       return;
     }
+
+    // Save active keys
+    saveKeys(currentMode);
 
     // Update UI state
     targetPrice   = tp;
@@ -429,8 +589,6 @@ socket.on('bot_status', ({ status, config }) => {
     showTriggered();
   }
 });
-
-
 
 // ── Init ──────────────────────────────────────────────────────────────────────
 setMode('testnet');

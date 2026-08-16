@@ -14,27 +14,45 @@ from config.settings import settings
 _LIVE_TICKER_URL = "https://api.binance.com/api/v3/ticker/price"
 
 
-def get_client(testnet: bool = True) -> Client:
+def get_client(testnet: bool = True, api_key: str | None = None, api_secret: str | None = None) -> Client:
     """
     Return an authenticated Binance Client.
 
     Args:
         testnet: If True, use Testnet credentials and endpoint.
                  If False, use Live credentials.
+        api_key: Optional custom API key from frontend.
+        api_secret: Optional custom API secret from frontend.
     Returns:
         binance.client.Client
     """
+    key = (api_key or "").strip()
+    secret = (api_secret or "").strip()
+
+    # Fallback to environment variables if not passed from frontend
+    if not key:
+        key = settings.TESTNET_API_KEY if testnet else settings.LIVE_API_KEY
+    if not secret:
+        secret = settings.TESTNET_API_SECRET if testnet else settings.LIVE_API_SECRET
+
+    if not key or not secret:
+        mode_str = "Testnet" if testnet else "Live"
+        raise ValueError(
+            f"Missing Binance {mode_str} API Key or Secret. "
+            f"Please enter your {mode_str} API credentials in the dashboard."
+        )
+
     try:
         if testnet:
             client = Client(
-                api_key=settings.TESTNET_API_KEY,
-                api_secret=settings.TESTNET_API_SECRET,
+                api_key=key,
+                api_secret=secret,
                 testnet=True,
             )
         else:
             client = Client(
-                api_key=settings.LIVE_API_KEY,
-                api_secret=settings.LIVE_API_SECRET,
+                api_key=key,
+                api_secret=secret,
             )
         return client
     except Exception as err:

@@ -100,12 +100,57 @@ def api_price():
         return jsonify({"error": str(exc)}), 400
 
 
+@app.route("/api/verify-keys", methods=["POST"])
+def api_verify_keys():
+    """Verify Binance API credentials and fetch account balance."""
+    data = request.get_json(force=True)
+    api_key = str(data.get("api_key", "")).strip()
+    api_secret = str(data.get("api_secret", "")).strip()
+    testnet = bool(data.get("testnet", True))
+
+    try:
+        client = get_client(testnet=testnet, api_key=api_key, api_secret=api_secret)
+        account_info = client.get_account()
+        can_trade = account_info.get("canTrade", False)
+        
+        # Extract non-zero balances
+        balances = []
+        usdt_balance = 0.0
+        for b in account_info.get("balances", []):
+            free = float(b.get("free", 0))
+            locked = float(b.get("locked", 0))
+            total = free + locked
+            if total > 0:
+                balances.append({
+                    "asset": b["asset"],
+                    "free": free,
+                    "locked": locked,
+                    "total": total,
+                })
+            if b["asset"] == "USDT":
+                usdt_balance = free
+
+        return jsonify({
+            "ok": True,
+            "can_trade": can_trade,
+            "usdt_balance": usdt_balance,
+            "balances": balances[:15],
+            "mode": "Testnet" if testnet else "Live",
+        })
+    except Exception as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
+
+
 @app.route("/api/start", methods=["POST"])
 def api_start():
     """Start the price monitor / sell bot."""
     global _monitor, _bot_config, _trade_log, _session_traded_symbols
 
     data = request.get_json(force=True)
+
+    # ── Credentials from frontend (optional fallback to .env) ───────────
+    api_key = str(data.get("api_key", "")).strip()
+    api_secret = str(data.get("api_secret", "")).strip()
 
     # ── Validate input ──────────────────────────────────────────────────
     symbol = str(data.get("symbol", "")).strip().upper()
@@ -139,7 +184,7 @@ def api_start():
 
     # ── Authenticate client & validate symbol ───────────────────────────
     try:
-        client = get_client(testnet=testnet)
+        client = get_client(testnet=testnet, api_key=api_key, api_secret=api_secret)
         get_symbol_info(client, symbol)
         current_price = get_current_price(symbol, client=client)
     except Exception as exc:
@@ -408,6 +453,8 @@ def api_start():
             initial_price=current_init_price,
             drop_percentage=drop_percentage,
             on_drop=on_drop,
+            api_key=api_key,
+            api_secret=api_secret,
         )
         _monitor.start()
         _push_status("running", {"config": _bot_config})

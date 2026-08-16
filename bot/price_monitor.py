@@ -46,6 +46,8 @@ class PriceMonitor:
         initial_price: float = 0.0,# starting price for percentage drop calculation
         drop_percentage: float = 0.0, # e.g. 5.0 for 5% drop trigger
         on_drop=None,              # callback(symbol, current_price, initial_price, actual_drop_pct)
+        api_key: str | None = None,
+        api_secret: str | None = None,
     ):
         self.symbol = symbol.upper()
         self.target_price = target_price
@@ -57,6 +59,8 @@ class PriceMonitor:
         self.initial_price = initial_price
         self.drop_percentage = drop_percentage
         self.on_drop = on_drop
+        self.api_key = api_key
+        self.api_secret = api_secret
 
         self._triggered = False
         self._drop_alert_fired = False
@@ -99,7 +103,7 @@ class PriceMonitor:
     def _run(self):
         """Main loop: connect WebSocket, handle messages."""
         try:
-            client = get_client(testnet=self.testnet)
+            client = get_client(testnet=self.testnet, api_key=self.api_key, api_secret=self.api_secret)
             # Always use LIVE WebSocket for price streaming (public market data)
             self._twm = ThreadedWebsocketManager(
                 api_key=client.API_KEY,
