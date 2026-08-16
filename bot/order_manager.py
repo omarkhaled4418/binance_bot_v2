@@ -77,6 +77,24 @@ def place_market_sell(
             raise exc
         log.warning(f"[OrderManager] Could not verify balance for {base_asset}: {exc}")
 
+    # Check MIN_NOTIONAL filter
+    min_notional = 5.0
+    for f in info.get("filters", []):
+        if f["filterType"] in ("MIN_NOTIONAL", "NOTIONAL"):
+            min_notional = float(f.get("minNotional", f.get("notional", 5.0)))
+            break
+
+    try:
+        current_p = float(client.get_symbol_ticker(symbol=symbol)["price"])
+        estimated_val = qty * current_p
+        if estimated_val < min_notional:
+            raise ValueError(
+                f"Sell order value for {qty} {symbol} (~${estimated_val:.4f} USDT) is below Binance minimum order size (${min_notional:.2f} USDT)."
+            )
+    except Exception as err:
+        if "below Binance minimum" in str(err):
+            raise err
+
     log.info(f"[OrderManager] Placing MARKET SELL {qty} {symbol} …")
     order = client.order_market_sell(symbol=symbol, quantity=qty)
     log.info(f"[OrderManager] MARKET SELL order result: {order}")
@@ -148,10 +166,12 @@ def convert_coin_to_top_gainer(
     old_symbol: str,
     sell_quantity: float,
     top_gainer_symbol: str,
+    fallback_usdt_amount: float = 0.0,
 ) -> dict:
     """
     Step 1: Sell original asset (old_symbol).
     Step 2: Take USDT proceeds and buy top_gainer_symbol (MARKET BUY via quoteOrderQty).
+    If selling original asset fails (e.g. holding is < MIN_NOTIONAL $5), seamlessly fallback to buying top gainer with available USDT!
 
     Returns summary dict containing details of both trades.
     """
@@ -160,23 +180,37 @@ def convert_coin_to_top_gainer(
 
     log.info(f"[OrderManager] 🔄 Starting Coin Conversion: Selling {sell_quantity} {old_symbol} -> Buying {top_gainer_symbol}")
 
-    # 1. Execute MARKET SELL on old symbol
-    sell_order = place_market_sell(client, old_symbol, sell_quantity)
-
-    # Calculate net USDT proceeds
+    sell_order = None
     usdt_proceeds = 0.0
     try:
-        usdt_proceeds = float(sell_order.get("cummulativeQuoteQty", 0.0))
-    except (ValueError, TypeError):
-        pass
+        # 1. Execute MARKET SELL on old symbol
+        sell_order = place_market_sell(client, old_symbol, sell_quantity)
+        try:
+            usdt_proceeds = float(sell_order.get("cummulativeQuoteQty", 0.0))
+        except (ValueError, TypeError):
+            pass
 
-    if usdt_proceeds <= 0:
-        # Fallback: estimate using current ticker price if cummulativeQuoteQty not returned
-        ticker = client.get_symbol_ticker(symbol=old_symbol)
-        price = float(ticker.get("price", 0))
-        usdt_proceeds = sell_quantity * price
-
-    log.info(f"[OrderManager] 💵 Market sell proceeds: ${usdt_proceeds:.2f} USDT")
+        if usdt_proceeds <= 0:
+            ticker = client.get_symbol_ticker(symbol=old_symbol)
+            price = float(ticker.get("price", 0))
+            usdt_proceeds = sell_quantity * price
+        log.info(f"[OrderManager] 💵 Market sell proceeds: ${usdt_proceeds:.2f} USDT")
+    except Exception as sell_err:
+        log.warning(f"[OrderManager] Sell step failed ({sell_err}). Checking available USDT for fallback buy...")
+        # Check wallet USDT balance
+        usdt_bal_info = client.get_asset_balance(asset="USDT")
+        free_usdt = float(usdt_bal_info.get("free", 0)) if usdt_bal_info else 0.0
+        
+        target_spend = fallback_usdt_amount if fallback_usdt_amount > 0 else 50.0
+        if free_usdt < target_spend:
+            target_spend = free_usdt
+        
+        if target_spend < 5.0:
+            raise ValueError(
+                f"Cannot convert to {top_gainer_symbol}: Selling {old_symbol} failed ({sell_err}) and available USDT (${free_usdt:.2f}) is below Binance minimum $5 NOTIONAL."
+            )
+        usdt_proceeds = round(target_spend, 2)
+        log.info(f"[OrderManager] 🔄 Fallback: Using ${usdt_proceeds:.2f} USDT from Spot Wallet to buy {top_gainer_symbol} directly.")
 
     # 2. Execute MARKET BUY on top gainer symbol using USDT proceeds
     buy_order = place_market_buy_quote(client, top_gainer_symbol, usdt_proceeds)
@@ -189,8 +223,8 @@ def convert_coin_to_top_gainer(
 
     summary = {
         "old_symbol": old_symbol,
-        "sold_quantity": sell_quantity,
-        "sell_order_id": sell_order.get("orderId"),
+        "sold_quantity": sell_quantity if sell_order else 0.0,
+        "sell_order_id": sell_order.get("orderId") if sell_order else None,
         "usdt_proceeds": round(usdt_proceeds, 2),
         "new_symbol": top_gainer_symbol,
         "bought_quantity": bought_qty,
@@ -201,7 +235,7 @@ def convert_coin_to_top_gainer(
 
     log.info(
         f"[OrderManager] ✅ Conversion Complete! "
-        f"Sold {sell_quantity} {old_symbol} for ${usdt_proceeds:.2f} USDT -> Bought {bought_qty} {top_gainer_symbol}"
+        f"Proceeds: ${usdt_proceeds:.2f} USDT -> Bought {bought_qty} {top_gainer_symbol}"
     )
 
     return summary

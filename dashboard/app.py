@@ -471,7 +471,9 @@ def api_start():
                     _push_log("info", f"🏆 Found Top 4H Gainer: {top_sym} (+{top_gain_pct}% 4H gain)")
 
                     _push_log("warning", f"💸 Executing Conversion: Selling {current_qty} {sym} → Buying {top_sym} …")
-                    conversion = convert_coin_to_top_gainer(client, sym, current_qty, top_sym)
+                    conversion = convert_coin_to_top_gainer(
+                        client, sym, current_qty, top_sym, fallback_usdt_amount=usdt_amount
+                    )
 
                     new_bought_qty = conversion["bought_quantity"]
 
