@@ -89,34 +89,55 @@ def place_market_buy_quote(
     quote_quantity: float,
 ) -> dict:
     """
-    Place a MARKET BUY order spending a specified amount of quote asset (e.g. USDT).
+    Place a MARKET BUY order spending a specified amount of quote asset (e.g. USDT, BNB, BTC).
 
     Args:
         client:         Authenticated Binance client.
-        symbol:         Trading pair, e.g. 'SOLUSDT'.
-        quote_quantity: Total amount of quote asset (USDT) to spend.
+        symbol:         Trading pair, e.g. 'BARUSDT' or 'BARBNB'.
+        quote_quantity: Total amount of quote asset to spend.
 
     Returns:
         Order response dict from Binance.
     """
     symbol = symbol.upper()
     info = get_symbol_info(client, symbol)
+    quote_asset = info.get("quoteAsset", "USDT")
+    quote_precision = int(info.get("quoteAssetPrecision", 2))
+
+    # Check available balance of the quote asset (the coin being spent)
+    try:
+        quote_bal_info = client.get_asset_balance(asset=quote_asset)
+        if quote_bal_info:
+            free_quote_bal = float(quote_bal_info.get("free", 0))
+            if free_quote_bal < quote_quantity:
+                if free_quote_bal <= 0:
+                    raise ValueError(
+                        f"Insufficient {quote_asset} balance: You have 0 {quote_asset} in your Spot Wallet."
+                    )
+                log.warning(
+                    f"[OrderManager] Requested {quote_quantity} {quote_asset} exceeds available balance ({free_quote_bal} {quote_asset}). "
+                    f"Auto-adjusting buy amount to available balance: {free_quote_bal} {quote_asset}."
+                )
+                quote_quantity = free_quote_bal
+    except Exception as exc:
+        if "Insufficient" in str(exc):
+            raise exc
+        log.warning(f"[OrderManager] Could not verify quote balance for {quote_asset}: {exc}")
 
     # Check MIN_NOTIONAL filter
-    min_notional = 5.0  # default 5 USDT min order
+    min_notional = 5.0  # default min order value
     for f in info.get("filters", []):
         if f["filterType"] in ("MIN_NOTIONAL", "NOTIONAL"):
             min_notional = float(f.get("minNotional", f.get("notional", 5.0)))
             break
 
-    # Round quote quantity to 2 decimal places for USDT
-    quote_qty = round(quote_quantity, 2)
+    quote_qty = round(quote_quantity, min(quote_precision, 8))
     if quote_qty < min_notional:
         raise ValueError(
-            f"Quote order amount (${quote_qty:.2f}) is below minimum notional filter (${min_notional:.2f}) for {symbol}."
+            f"Quote order amount ({quote_qty} {quote_asset}) is below minimum notional filter ({min_notional} {quote_asset}) for {symbol}."
         )
 
-    log.info(f"[OrderManager] Placing MARKET BUY {symbol} spending ${quote_qty:.2f} USDT …")
+    log.info(f"[OrderManager] Placing MARKET BUY {symbol} spending {quote_qty} {quote_asset} …")
     order = client.order_market_buy(symbol=symbol, quoteOrderQty=quote_qty)
     log.info(f"[OrderManager] MARKET BUY order result: {order}")
     return order

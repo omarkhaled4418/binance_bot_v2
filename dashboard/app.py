@@ -199,37 +199,59 @@ def api_balance():
 
 @app.route("/api/quick-buy", methods=["POST"])
 def api_quick_buy():
-    """Place a quick market buy order using spot USDT (helpful for testnet & funding)."""
+    """Place a custom market buy order (choose target coin, quote paying coin, and custom amount)."""
     data = request.get_json(force=True)
     api_key = str(data.get("api_key", "")).strip()
     api_secret = str(data.get("api_secret", "")).strip()
     testnet = bool(data.get("testnet", True))
-    symbol = str(data.get("symbol", "")).strip().upper()
-    quote_amount = float(data.get("amount_usdt", 50.0))
+    
+    # Can accept full symbol e.g. BARUSDT or split buy_coin + pay_coin
+    buy_coin = str(data.get("buy_coin", "")).strip().upper()
+    pay_coin = str(data.get("pay_coin", "USDT")).strip().upper()
+    raw_symbol = str(data.get("symbol", "")).strip().upper()
 
-    if not symbol:
-        return jsonify({"error": "Symbol is required"}), 400
+    if raw_symbol:
+        symbol = raw_symbol
+        base_asset = buy_coin or symbol.replace(pay_coin, "")
+    else:
+        if not buy_coin:
+            return jsonify({"error": "Target coin to buy is required (e.g. BAR)."}), 400
+        if not pay_coin:
+            pay_coin = "USDT"
+        symbol = f"{buy_coin}{pay_coin}"
+        base_asset = buy_coin
+
+    try:
+        quote_amount = float(data.get("amount", data.get("amount_usdt", 0)))
+    except (ValueError, TypeError):
+        return jsonify({"error": "Invalid amount to spend."}), 400
+
     if quote_amount <= 0:
-        return jsonify({"error": "Amount must be > 0"}), 400
+        return jsonify({"error": f"Please enter an amount > 0 {pay_coin} to spend."}), 400
 
     try:
         client = get_client(testnet=testnet, api_key=api_key, api_secret=api_secret)
         order = place_market_buy_quote(client, symbol, quote_amount)
-        _push_log("success", f"🛒 Quick Buy: Spent ${quote_amount:.2f} USDT to buy {symbol} | Order ID={order.get('orderId')}")
+        _push_log("success", f"🛒 Spot Buy Executed: Spent {quote_amount} {pay_coin} to buy {symbol} | Order ID={order.get('orderId')}")
         
-        # Fetch updated balance
-        base_asset = symbol.replace("USDT", "")
+        # Fetch updated balances
         bal_info = client.get_asset_balance(asset=base_asset)
         free_qty = float(bal_info.get("free", 0)) if bal_info else 0.0
+
+        quote_bal_info = client.get_asset_balance(asset=pay_coin)
+        quote_free_qty = float(quote_bal_info.get("free", 0)) if quote_bal_info else 0.0
 
         return jsonify({
             "ok": True,
             "order": order,
+            "symbol": symbol,
             "bought_asset": base_asset,
+            "pay_asset": pay_coin,
             "new_balance": free_qty,
+            "quote_balance": quote_free_qty,
         })
     except Exception as exc:
-        _push_log("error", f"❌ Quick Buy Failed for {symbol}: {exc}")
+        _push_log("error", f"❌ Spot Buy Failed for {symbol}: {exc}")
         return jsonify({"ok": False, "error": str(exc)}), 400
 
 

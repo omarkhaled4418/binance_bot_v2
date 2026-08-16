@@ -71,6 +71,23 @@ const triggeredOverlay = document.getElementById('triggered-overlay');
 const overlayDesc      = document.getElementById('overlay-desc');
 const overlayCloseBtn  = document.getElementById('overlay-close-btn');
 
+// Spot Buy Modal refs
+const buyModal         = document.getElementById('buy-modal');
+const modalBuyClose    = document.getElementById('modal-buy-close');
+const modalCancelBtn   = document.getElementById('modal-cancel-btn');
+const modalBuyForm     = document.getElementById('modal-buy-form');
+const modalBuyCoin     = document.getElementById('modal-buy-coin');
+const modalPayCoin     = document.getElementById('modal-pay-coin');
+const modalQuoteBalHint = document.getElementById('modal-quote-bal-hint');
+const modalAmountLabel = document.getElementById('modal-amount-label');
+const modalBuyAmount   = document.getElementById('modal-buy-amount');
+const modalEstReceive  = document.getElementById('modal-est-receive');
+const modalEstPrice    = document.getElementById('modal-est-price');
+const modalBuyStatus   = document.getElementById('modal-buy-status');
+const modalConfirmBuyBtn = document.getElementById('modal-confirm-buy-btn');
+const btnModalMax      = document.getElementById('btn-modal-max');
+const presetChips      = document.querySelectorAll('.btn-preset-chip[data-amount]');
+
 // ── State ─────────────────────────────────────────────────────────────────────
 let currentMode   = 'testnet';  // 'testnet' | 'live'
 let botStatus     = 'idle';     // 'idle' | 'running' | 'triggered' | 'error'
@@ -85,6 +102,7 @@ let cachedBalances = {
   coin_asset: '',
   coin_free: 0,
   coin_value_usdt: 0,
+  all_balances: [],
 };
 
 const MAX_PRICE_POINTS = 120;   // keep last 120 ticks on chart
@@ -139,7 +157,6 @@ function loadSavedKeys(mode) {
     n8nWebhookUrlInput.value = savedWebhook;
   }
 
-  // Auto-fetch balances if credentials exist
   if (apiKeyInput.value && apiSecretInput.value) {
     fetchSpotBalances();
   }
@@ -208,7 +225,7 @@ clearKeysBtn.addEventListener('click', () => {
 });
 
 function resetBalanceDisplay() {
-  cachedBalances = { usdt_free: 0, coin_asset: '', coin_free: 0, coin_value_usdt: 0 };
+  cachedBalances = { usdt_free: 0, coin_asset: '', coin_free: 0, coin_value_usdt: 0, all_balances: [] };
   if (usdtWalletHint) usdtWalletHint.textContent = 'USDT Wallet: —';
   if (statUsdtBalance) statUsdtBalance.textContent = '—';
   if (statHolding) statHolding.textContent = '—';
@@ -260,8 +277,8 @@ async function fetchSpotBalances(optSymbol = null) {
         statHolding.textContent = `${fmt(data.coin_free)} ${data.coin_asset}`;
       }
       if (btnQuickBuy) {
-        btnQuickBuy.style.display = isTestnet ? 'inline-block' : 'none';
-        btnQuickBuy.textContent = `🛒 Buy $50 ${data.coin_asset}`;
+        btnQuickBuy.style.display = 'inline-block';
+        btnQuickBuy.textContent = `🛒 Buy ${data.coin_asset}`;
       }
     } else {
       if (coinBalancePill) coinBalancePill.classList.add('hidden');
@@ -289,25 +306,148 @@ if (btnUseMax) {
   });
 }
 
-// Quick Buy Test Coins Button Handler (for Testnet)
+// ── Spot Buy Modal Logic ──────────────────────────────────────────────────────
+function getQuoteBalance(quoteAsset) {
+  if (quoteAsset === 'USDT') return cachedBalances.usdt_free || 0;
+  if (!cachedBalances.all_balances) return 0;
+  const match = cachedBalances.all_balances.find(b => b.asset === quoteAsset);
+  return match ? match.free : 0;
+}
+
+function updateQuoteBalHint() {
+  const quote = modalPayCoin.value;
+  const bal = getQuoteBalance(quote);
+  modalQuoteBalHint.textContent = `Available: ${fmt(bal, 4)} ${quote}`;
+  modalAmountLabel.textContent = `Amount to Spend (${quote})`;
+}
+
+async function updateBuyModalEstimate() {
+  const buyCoin = modalBuyCoin.value.trim().toUpperCase();
+  const payCoin = modalPayCoin.value.trim().toUpperCase();
+  const amount = parseFloat(modalBuyAmount.value) || 0;
+
+  if (!buyCoin || !payCoin) {
+    modalEstReceive.textContent = '—';
+    modalEstPrice.textContent = '—';
+    return;
+  }
+
+  const pairSymbol = `${buyCoin}${payCoin}`;
+  try {
+    const res = await fetch(`/api/price?symbol=${pairSymbol}`);
+    const data = await res.json();
+    if (data.price && data.price > 0) {
+      modalEstPrice.textContent = `1 ${buyCoin} = ${fmt(data.price, 6)} ${payCoin}`;
+      if (amount > 0) {
+        const estQty = amount / data.price;
+        modalEstReceive.textContent = `≈ ${fmt(estQty, 4)} ${buyCoin}`;
+      } else {
+        modalEstReceive.textContent = `0.00 ${buyCoin}`;
+      }
+    } else {
+      // Fallback: estimate via USDT
+      modalEstPrice.textContent = 'Check pair on Binance';
+      modalEstReceive.textContent = `Spend ${amount} ${payCoin}`;
+    }
+  } catch (err) {
+    modalEstPrice.textContent = 'Price check error';
+  }
+}
+
+function openBuyModal(defaultCoin = '') {
+  const sym = defaultCoin || symbolInput.value.trim().toUpperCase();
+  const base = sym.replace('USDT', '') || cachedBalances.coin_asset || 'BAR';
+  modalBuyCoin.value = base;
+  modalBuyAmount.value = '';
+  modalBuyStatus.className = 'api-verify-result hidden';
+  modalBuyStatus.textContent = '';
+
+  updateQuoteBalHint();
+  updateBuyModalEstimate();
+  buyModal.style.display = 'flex';
+}
+
+function closeBuyModal() {
+  buyModal.style.display = 'none';
+}
+
 if (btnQuickBuy) {
-  btnQuickBuy.addEventListener('click', async () => {
-    const sym = symbolInput.value.trim().toUpperCase();
-    if (!sym) return;
+  btnQuickBuy.addEventListener('click', () => {
+    openBuyModal();
+  });
+}
+
+if (modalBuyClose) modalBuyClose.addEventListener('click', closeBuyModal);
+if (modalCancelBtn) modalCancelBtn.addEventListener('click', closeBuyModal);
+
+modalPayCoin.addEventListener('change', () => {
+  updateQuoteBalHint();
+  updateBuyModalEstimate();
+});
+
+modalBuyCoin.addEventListener('input', () => {
+  updateBuyModalEstimate();
+});
+
+modalBuyAmount.addEventListener('input', () => {
+  updateBuyModalEstimate();
+});
+
+presetChips.forEach(btn => {
+  btn.addEventListener('click', () => {
+    const val = btn.getAttribute('data-amount');
+    modalBuyAmount.value = val;
+    updateBuyModalEstimate();
+  });
+});
+
+if (btnModalMax) {
+  btnModalMax.addEventListener('click', () => {
+    const quote = modalPayCoin.value;
+    const maxBal = getQuoteBalance(quote);
+    if (maxBal <= 0) {
+      alert(`You have 0 ${quote} available in your Spot Wallet to spend.`);
+      return;
+    }
+    modalBuyAmount.value = maxBal.toFixed(4);
+    updateBuyModalEstimate();
+  });
+}
+
+if (modalBuyForm) {
+  modalBuyForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const buyCoin = modalBuyCoin.value.trim().toUpperCase();
+    const payCoin = modalPayCoin.value.trim().toUpperCase();
+    const amount = parseFloat(modalBuyAmount.value);
     const key = apiKeyInput.value.trim();
     const secret = apiSecretInput.value.trim();
     const isTestnet = currentMode === 'testnet';
 
-    btnQuickBuy.disabled = true;
-    btnQuickBuy.textContent = 'Buying $50…';
+    if (!buyCoin) {
+      modalBuyStatus.className = 'api-verify-result error';
+      modalBuyStatus.textContent = 'Please enter the coin to buy (e.g. BAR).';
+      return;
+    }
+    if (isNaN(amount) || amount <= 0) {
+      modalBuyStatus.className = 'api-verify-result error';
+      modalBuyStatus.textContent = 'Please enter an amount > 0.';
+      return;
+    }
+
+    modalConfirmBuyBtn.disabled = true;
+    modalConfirmBuyBtn.textContent = 'Executing Buy…';
+    modalBuyStatus.className = 'api-verify-result';
+    modalBuyStatus.textContent = `⏳ Placing market buy for ${buyCoin} spending ${amount} ${payCoin}…`;
 
     try {
       const res = await fetch('/api/quick-buy', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          symbol: sym,
-          amount_usdt: 50.0,
+          buy_coin: buyCoin,
+          pay_coin: payCoin,
+          amount: amount,
           api_key: key,
           api_secret: secret,
           testnet: isTestnet,
@@ -316,16 +456,21 @@ if (btnQuickBuy) {
 
       const data = await res.json();
       if (!res.ok || !data.ok) {
-        alert('Quick Buy Error: ' + (data.error || 'Failed to place buy order'));
+        modalBuyStatus.className = 'api-verify-result error';
+        modalBuyStatus.innerHTML = `<strong>❌ Buy Failed:</strong><br>${data.error || 'Check balance and trading pair.'}`;
       } else {
-        appendLog('success', `🛒 Quick Buy: Bought ${fmt(data.new_balance)} ${data.bought_asset} with $50 Testnet USDT!`);
-        await fetchSpotBalances(sym);
+        modalBuyStatus.className = 'api-verify-result success';
+        modalBuyStatus.innerHTML = `<strong>✅ Buy Successful!</strong><br>Bought ${buyCoin} | New Balance: <strong>${fmt(data.new_balance)} ${data.bought_asset}</strong>`;
+        appendLog('success', `🛒 Spot Buy: Spent ${amount} ${payCoin} to buy ${data.symbol}! New ${buyCoin} balance: ${fmt(data.new_balance)}`);
+        await fetchSpotBalances(symbolInput.value);
+        setTimeout(closeBuyModal, 1500);
       }
     } catch (err) {
-      alert('Network error placing quick buy: ' + err.message);
+      modalBuyStatus.className = 'api-verify-result error';
+      modalBuyStatus.textContent = '❌ Network error: ' + err.message;
     } finally {
-      btnQuickBuy.disabled = false;
-      btnQuickBuy.textContent = `🛒 Buy $50 ${cachedBalances.coin_asset || ''}`;
+      modalConfirmBuyBtn.disabled = false;
+      modalConfirmBuyBtn.innerHTML = '<span class="btn-icon">🛒</span> Place Market Buy';
     }
   });
 }
@@ -367,7 +512,6 @@ verifyKeysBtn.addEventListener('click', async () => {
     apiVerifyResult.className = 'api-verify-result success';
     const tradingBadge = data.can_trade ? '🟢 Trading Enabled' : '🟡 View Only';
     
-    // Format top holding coins summary
     const topHoldings = data.balances
       .map(b => `${b.asset}: ${fmt(b.free)}`)
       .slice(0, 5)

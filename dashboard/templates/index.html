@@ -296,6 +296,81 @@
   </div>
 </div>
 
+<!-- ── Spot Buy / Acquire Coin Modal ────────────────────────────────────── -->
+<div class="overlay" id="buy-modal" style="display:none">
+  <div class="overlay-card modal-card">
+    <div class="modal-header">
+      <div class="modal-title">
+        <span class="card-icon">🛒</span> Buy Spot Asset
+      </div>
+      <button type="button" id="modal-buy-close" class="btn-ghost-sm">✕</button>
+    </div>
+
+    <form id="modal-buy-form" class="modal-body">
+      <!-- Target Coin to Buy -->
+      <div class="form-group">
+        <label class="form-label" for="modal-buy-coin">Coin You Want to Buy</label>
+        <input type="text" id="modal-buy-coin" class="form-input font-mono" placeholder="e.g. BAR, BTC, SOL" autocomplete="off" />
+      </div>
+
+      <!-- Quote Coin to Pay With -->
+      <div class="form-group">
+        <div class="label-row">
+          <label class="form-label" for="modal-pay-coin">Pay With (Quote Coin)</label>
+          <span id="modal-quote-bal-hint" class="wallet-hint">Available: —</span>
+        </div>
+        <select id="modal-pay-coin" class="form-input font-mono">
+          <option value="USDT">USDT (Tether USD)</option>
+          <option value="FDUSD">FDUSD (First Digital USD)</option>
+          <option value="USDC">USDC (USD Coin)</option>
+          <option value="BNB">BNB (Binance Coin)</option>
+          <option value="BTC">BTC (Bitcoin)</option>
+        </select>
+      </div>
+
+      <!-- Amount to Spend -->
+      <div class="form-group">
+        <label class="form-label" id="modal-amount-label" for="modal-buy-amount">Amount to Spend (USDT)</label>
+        <input type="number" id="modal-buy-amount" class="form-input font-mono" placeholder="e.g. 50" min="0" step="any" />
+        
+        <!-- Preset quick buttons -->
+        <div class="preset-chips-row">
+          <button type="button" class="btn-preset-chip" data-amount="10">$10</button>
+          <button type="button" class="btn-preset-chip" data-amount="25">$25</button>
+          <button type="button" class="btn-preset-chip" data-amount="50">$50</button>
+          <button type="button" class="btn-preset-chip" data-amount="100">$100</button>
+          <button type="button" class="btn-preset-chip" data-amount="500">$500</button>
+          <button type="button" id="btn-modal-max" class="btn-preset-chip accent-chip">MAX (100%)</button>
+        </div>
+      </div>
+
+      <!-- Estimate Box -->
+      <div class="modal-estimate-box" id="modal-estimate-box">
+        <div class="est-row">
+          <span class="est-label">Estimated Output:</span>
+          <strong id="modal-est-receive" class="est-val">—</strong>
+        </div>
+        <div class="est-row est-sub">
+          <span class="est-label">Market Price:</span>
+          <span id="modal-est-price">—</span>
+        </div>
+      </div>
+
+      <div id="modal-buy-status" class="api-verify-result hidden"></div>
+
+      <!-- Modal Action Buttons -->
+      <div class="form-actions modal-actions">
+        <button type="submit" id="modal-confirm-buy-btn" class="btn btn-primary">
+          <span class="btn-icon">🛒</span> Place Market Buy
+        </button>
+        <button type="button" id="modal-cancel-btn" class="btn btn-ghost">
+          Cancel
+        </button>
+      </div>
+    </form>
+  </div>
+</div>
+
 <script src="/static/js/app.js"></script>
 </body>
 </html>
