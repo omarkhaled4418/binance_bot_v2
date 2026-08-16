@@ -109,9 +109,14 @@
         <div class="form-group">
           <div class="label-row">
             <label class="form-label" for="symbol">Coin Symbol</label>
-            <button type="button" id="refresh-bal-btn" class="btn-ghost-sm" title="Refresh Spot Wallet Balances">
-              🔄 Refresh Balance
-            </button>
+            <div class="header-action-group">
+              <button type="button" id="btn-open-convert-all" class="btn-ghost-sm" title="Liquidate / Convert all spot holdings to one coin (USDT, BTC, etc.)">
+                🧹 Convert All Coins
+              </button>
+              <button type="button" id="refresh-bal-btn" class="btn-ghost-sm" title="Refresh Spot Wallet Balances">
+                🔄 Refresh
+              </button>
+            </div>
           </div>
           <div class="input-wrapper">
             <input type="text" id="symbol" class="form-input" placeholder="e.g. BTCUSDT"
@@ -367,6 +372,65 @@
           <span class="btn-icon">🛒</span> Place Market Buy
         </button>
         <button type="button" id="modal-cancel-btn" class="btn btn-ghost">
+          Cancel
+        </button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- ── Convert All Coins to One Coin Modal ────────────────────────── -->
+<div class="overlay" id="convert-all-modal" style="display:none">
+  <div class="overlay-card modal-card">
+    <div class="modal-header">
+      <div class="modal-title">
+        <span class="card-icon">🧹</span> Convert All Spot Coins to One Asset
+      </div>
+      <button type="button" id="modal-convert-all-close" class="btn-ghost-sm">✕</button>
+    </div>
+
+    <form id="modal-convert-all-form" class="modal-body">
+      <p class="form-hint" style="margin-bottom: 12px;">
+        This will market-sell all your other non-zero Spot Wallet coins and convert their entire value into a single target asset.
+      </p>
+
+      <!-- Target Asset to Convert into -->
+      <div class="form-group">
+        <label class="form-label" for="convert-all-target-asset">Convert Everything Into:</label>
+        <select id="convert-all-target-asset" class="form-input font-mono">
+          <option value="USDT" selected>USDT (Tether USD)</option>
+          <option value="BTC">BTC (Bitcoin)</option>
+          <option value="BNB">BNB (Binance Coin)</option>
+          <option value="FDUSD">FDUSD (First Digital USD)</option>
+          <option value="USDC">USDC (USD Coin)</option>
+          <option value="ETH">ETH (Ethereum)</option>
+        </select>
+      </div>
+
+      <!-- Preview of current assets to be converted -->
+      <div class="form-group">
+        <label class="form-label">Coins Found in Spot Wallet:</label>
+        <div id="convert-all-assets-list" class="assets-preview-list">
+          <span class="wallet-hint">Fetching holdings…</span>
+        </div>
+      </div>
+
+      <!-- Confirmation Checkbox -->
+      <div class="form-group checkbox-row">
+        <label class="checkbox-label" for="convert-all-confirm-check">
+          <input type="checkbox" id="convert-all-confirm-check" required />
+          <span>I understand this will sell all other spot assets at market price.</span>
+        </label>
+      </div>
+
+      <div id="modal-convert-all-status" class="api-verify-result hidden"></div>
+
+      <!-- Action Buttons -->
+      <div class="form-actions modal-actions">
+        <button type="submit" id="modal-convert-all-submit-btn" class="btn btn-danger">
+          <span class="btn-icon">🧹</span> Convert All Coins Now
+        </button>
+        <button type="button" id="modal-convert-all-cancel-btn" class="btn btn-ghost">
           Cancel
         </button>
       </div>

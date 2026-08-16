@@ -807,4 +807,51 @@ canvas#price-chart { width: 100% !important; height: 100% !important; }
   margin-top: 20px;
 }
 
+.header-action-group {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.assets-preview-list {
+  background: rgba(11, 14, 26, 0.6);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 10px 14px;
+  max-height: 140px;
+  overflow-y: auto;
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+}
+
+.holding-item-row {
+  display: flex;
+  justify-content: space-between;
+  padding: 3px 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.holding-item-row:last-child {
+  border-bottom: none;
+}
+
+.checkbox-row {
+  margin: 12px 0;
+}
+
+.checkbox-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.78rem;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.checkbox-label input[type="checkbox"] {
+  cursor: pointer;
+  accent-color: var(--accent);
+}
+
+
 

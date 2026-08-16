@@ -326,6 +326,113 @@ def api_manual_sell():
         return jsonify({"ok": False, "error": str(exc)}), 400
 
 
+@app.route("/api/convert-all", methods=["POST"])
+def api_convert_all():
+    """Liquidate / Convert all non-zero spot coin holdings into a single target coin (e.g. USDT or BTC)."""
+    global _monitor
+    data = request.get_json(force=True)
+    api_key = str(data.get("api_key", "")).strip()
+    api_secret = str(data.get("api_secret", "")).strip()
+    testnet = bool(data.get("testnet", True))
+    target_asset = str(data.get("target_asset", "USDT")).strip().upper()
+
+    if not target_asset:
+        target_asset = "USDT"
+
+    try:
+        client = get_client(testnet=testnet, api_key=api_key, api_secret=api_secret)
+        
+        # Stop active monitor if running
+        if _monitor and _monitor.is_running:
+            _monitor.stop()
+            _push_log("warning", "⏹️ Bot stopped due to Convert All action.")
+            _push_status("idle")
+
+        account_info = client.get_account()
+        balances = account_info.get("balances", [])
+
+        # Filter assets with free balance > 0 and not equal to target_asset
+        sellable_assets = [
+            b for b in balances 
+            if float(b.get("free", 0)) > 0 and b["asset"].upper() != target_asset
+        ]
+
+        if not sellable_assets:
+            return jsonify({"ok": True, "message": f"No other coins found to convert to {target_asset}.", "results": []})
+
+        _push_log("warning", f"🧹 CONVERT ALL INITIATED: Converting {len(sellable_assets)} spot coins to {target_asset} …")
+
+        results = []
+        total_proceeds_usdt = 0.0
+
+        for item in sellable_assets:
+            asset = item["asset"].upper()
+            free_qty = float(item["free"])
+
+            # 1. Determine trading pair to sell to USDT first or direct to target_asset
+            direct_pair = f"{asset}{target_asset}"
+            usdt_pair = f"{asset}USDT"
+
+            pair_to_sell = ""
+            try:
+                get_symbol_info(client, direct_pair)
+                pair_to_sell = direct_pair
+            except Exception:
+                try:
+                    get_symbol_info(client, usdt_pair)
+                    pair_to_sell = usdt_pair
+                except Exception:
+                    pair_to_sell = ""
+
+            if not pair_to_sell:
+                _push_log("warning", f"⚠️ Skipped {asset}: No active spot trading pair found.")
+                results.append({"asset": asset, "status": "skipped", "reason": "No pair found"})
+                continue
+
+            try:
+                sell_res = place_market_sell(client, pair_to_sell, free_qty)
+                proceeds = float(sell_res.get("cummulativeQuoteQty", 0.0))
+                _push_log("success", f"✅ Sold {free_qty} {asset} via {pair_to_sell} (Proceeds: {proceeds:.2f} {pair_to_sell.replace(asset, '')})")
+                results.append({
+                    "asset": asset,
+                    "status": "sold",
+                    "pair": pair_to_sell,
+                    "quantity": free_qty,
+                    "proceeds": proceeds,
+                })
+                if pair_to_sell.endswith("USDT"):
+                    total_proceeds_usdt += proceeds
+            except Exception as e:
+                _push_log("error", f"❌ Failed to sell {asset} ({pair_to_sell}): {e}")
+                results.append({"asset": asset, "status": "error", "reason": str(e)})
+
+        # If target_asset is NOT USDT and we have USDT proceeds (e.g. converting everything to BTC), buy target_asset with USDT
+        if target_asset != "USDT" and total_proceeds_usdt >= 5.0:
+            target_usdt_pair = f"{target_asset}USDT"
+            try:
+                _push_log("info", f"🔄 Buying {target_asset} with accumulated ${total_proceeds_usdt:.2f} USDT proceeds …")
+                buy_res = place_market_buy_quote(client, target_usdt_pair, total_proceeds_usdt)
+                _push_log("success", f"🏆 Purchased {buy_res.get('executedQty')} {target_asset}!")
+            except Exception as buy_e:
+                _push_log("error", f"❌ Failed to buy {target_asset} with USDT proceeds: {buy_e}")
+
+        # Fetch updated target asset balance
+        target_bal_info = client.get_asset_balance(asset=target_asset)
+        final_target_bal = float(target_bal_info.get("free", 0.0)) if target_bal_info else 0.0
+
+        _push_log("success", f"🎉 CONVERT ALL COMPLETE! Final {target_asset} Balance: {final_target_bal:,.4f} {target_asset}")
+
+        return jsonify({
+            "ok": True,
+            "target_asset": target_asset,
+            "final_balance": final_target_bal,
+            "results": results,
+        })
+    except Exception as exc:
+        _push_log("error", f"❌ Convert All Failed: {exc}")
+        return jsonify({"ok": False, "error": str(exc)}), 400
+
+
 @app.route("/api/start", methods=["POST"])
 def api_start():
     """Start the price monitor / sell bot."""

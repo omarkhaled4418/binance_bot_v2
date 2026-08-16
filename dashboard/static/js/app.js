@@ -89,6 +89,18 @@ const modalConfirmBuyBtn = document.getElementById('modal-confirm-buy-btn');
 const btnModalMax      = document.getElementById('btn-modal-max');
 const presetChips      = document.querySelectorAll('.btn-preset-chip[data-amount]');
 
+// Convert All Coins Modal refs
+const btnOpenConvertAll       = document.getElementById('btn-open-convert-all');
+const convertAllModal         = document.getElementById('convert-all-modal');
+const modalConvertAllClose    = document.getElementById('modal-convert-all-close');
+const modalConvertAllCancelBtn = document.getElementById('modal-convert-all-cancel-btn');
+const modalConvertAllForm     = document.getElementById('modal-convert-all-form');
+const convertAllTargetAsset   = document.getElementById('convert-all-target-asset');
+const convertAllAssetsList    = document.getElementById('convert-all-assets-list');
+const convertAllConfirmCheck  = document.getElementById('convert-all-confirm-check');
+const modalConvertAllStatus   = document.getElementById('modal-convert-all-status');
+const modalConvertAllSubmitBtn = document.getElementById('modal-convert-all-submit-btn');
+
 // ── State ─────────────────────────────────────────────────────────────────────
 let currentMode   = 'testnet';  // 'testnet' | 'live'
 let botStatus     = 'idle';     // 'idle' | 'running' | 'triggered' | 'error'
@@ -480,6 +492,127 @@ if (refreshBalBtn) {
   refreshBalBtn.addEventListener('click', () => {
     fetchSpotBalances();
     appendLog('info', '🔄 Spot Wallet balances refreshed.');
+  });
+}
+
+// ── Convert All Coins Logic ──────────────────────────────────────────────────
+async function populateConvertAllAssets() {
+  convertAllAssetsList.innerHTML = '<span class="wallet-hint">Scanning Spot Wallet…</span>';
+  const key = apiKeyInput.value.trim();
+  const secret = apiSecretInput.value.trim();
+  const isTestnet = currentMode === 'testnet';
+
+  try {
+    const res = await fetch('/api/verify-keys', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        api_key: key,
+        api_secret: secret,
+        testnet: isTestnet,
+      }),
+    });
+
+    const data = await res.json();
+    if (!res.ok || !data.ok || !data.balances || !data.balances.length) {
+      convertAllAssetsList.innerHTML = '<span class="wallet-hint">No non-zero spot coin holdings found.</span>';
+      return;
+    }
+
+    cachedBalances.all_balances = data.balances;
+    const targetAsset = convertAllTargetAsset.value;
+    const filtered = data.balances.filter(b => b.asset !== targetAsset && b.free > 0);
+
+    if (!filtered.length) {
+      convertAllAssetsList.innerHTML = `<span class="wallet-hint">No other coins found to convert to ${targetAsset}.</span>`;
+      return;
+    }
+
+    convertAllAssetsList.innerHTML = filtered.map(b => `
+      <div class="holding-item-row">
+        <span><strong>${b.asset}</strong></span>
+        <span class="font-mono">${fmt(b.free)}</span>
+      </div>
+    `).join('');
+
+  } catch (err) {
+    convertAllAssetsList.innerHTML = `<span class="wallet-hint">Error fetching holdings: ${err.message}</span>`;
+  }
+}
+
+function openConvertAllModal() {
+  convertAllModal.style.display = 'flex';
+  convertAllConfirmCheck.checked = false;
+  modalConvertAllStatus.className = 'api-verify-result hidden';
+  modalConvertAllStatus.textContent = '';
+  populateConvertAllAssets();
+}
+
+function closeConvertAllModal() {
+  convertAllModal.style.display = 'none';
+}
+
+if (btnOpenConvertAll) btnOpenConvertAll.addEventListener('click', openConvertAllModal);
+if (modalConvertAllClose) modalConvertAllClose.addEventListener('click', closeConvertAllModal);
+if (modalConvertAllCancelBtn) modalConvertAllCancelBtn.addEventListener('click', closeConvertAllModal);
+
+convertAllTargetAsset.addEventListener('change', populateConvertAllAssets);
+
+if (modalConvertAllForm) {
+  modalConvertAllForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    if (!convertAllConfirmCheck.checked) {
+      modalConvertAllStatus.className = 'api-verify-result error';
+      modalConvertAllStatus.textContent = 'Please check the confirmation box to proceed.';
+      return;
+    }
+
+    const target = convertAllTargetAsset.value;
+    const key = apiKeyInput.value.trim();
+    const secret = apiSecretInput.value.trim();
+    const isTestnet = currentMode === 'testnet';
+
+    modalConvertAllSubmitBtn.disabled = true;
+    modalConvertAllSubmitBtn.innerHTML = '<span class="btn-icon">⏳</span> Converting All…';
+    modalConvertAllStatus.className = 'api-verify-result';
+    modalConvertAllStatus.textContent = `⏳ Liquidating all spot coins into ${target}…`;
+
+    try {
+      const res = await fetch('/api/convert-all', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          target_asset: target,
+          testnet: isTestnet,
+          api_key: key,
+          api_secret: secret,
+        }),
+      });
+
+      const data = await res.json();
+
+      if (!res.ok || !data.ok) {
+        modalConvertAllStatus.className = 'api-verify-result error';
+        modalConvertAllStatus.innerHTML = `<strong>❌ Conversion Failed:</strong><br>${data.error || 'Failed to convert coins.'}`;
+      } else {
+        const soldList = (data.results || []).filter(r => r.status === 'sold');
+        modalConvertAllStatus.className = 'api-verify-result success';
+        modalConvertAllStatus.innerHTML = `
+          <strong>🎉 Conversion Complete!</strong><br>
+          • Converted ${soldList.length} assets into <strong>${target}</strong>.<br>
+          • Final ${target} Balance: <strong>${fmt(data.final_balance)} ${target}</strong>
+        `;
+        appendLog('success', `🧹 CONVERT ALL SUCCESS: Liquidated ${soldList.length} assets into ${target}! Final Balance: ${fmt(data.final_balance)} ${target}`);
+        await fetchSpotBalances(symbolInput.value);
+        setTimeout(closeConvertAllModal, 2500);
+      }
+    } catch (err) {
+      modalConvertAllStatus.className = 'api-verify-result error';
+      modalConvertAllStatus.textContent = '❌ Network error: ' + err.message;
+    } finally {
+      modalConvertAllSubmitBtn.disabled = false;
+      modalConvertAllSubmitBtn.innerHTML = '<span class="btn-icon">🧹</span> Convert All Coins Now';
+    }
   });
 }
 
