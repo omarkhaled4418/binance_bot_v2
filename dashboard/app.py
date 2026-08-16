@@ -372,44 +372,76 @@ def api_start():
         def on_trigger(sym: str, qty: float):
             _push_log("success", f"🎯 PROFIT TARGET REACHED for {sym}! Placing MARKET SELL for {qty} {sym} …")
             order = place_market_sell(client, sym, qty)
+            
+            # Calculate USDT proceeds from the sell
+            usdt_proceeds = 0.0
+            try:
+                usdt_proceeds = float(order.get("cummulativeQuoteQty", 0.0))
+            except (ValueError, TypeError):
+                pass
+            if usdt_proceeds <= 0:
+                try:
+                    cur_p = get_current_price(sym, client=client)
+                    usdt_proceeds = qty * cur_p
+                except Exception:
+                    usdt_proceeds = usdt_amount
+
             _push_log(
                 "success",
-                f"🎉 TARGET SECURED! Sold {qty} {sym} | Order ID={order.get('orderId')} | Status={order.get('status')}.",
+                f"🎉 TARGET SECURED! Sold {qty} {sym} for ${usdt_proceeds:.2f} USDT | Order ID={order.get('orderId')} | Status={order.get('status')}.",
             )
 
             if auto_restart_on_trigger:
-                _push_log("info", f"🔄 AUTO-RESTART ENABLED: Restarting bot for {sym} with same settings …")
+                _push_log("info", f"🔄 AUTO-RESTART: Re-buying {sym} using ${usdt_proceeds:.2f} USDT to start next profit cycle …")
                 time.sleep(1.0)
                 try:
-                    new_price = get_current_price(sym, client=client)
-                except Exception:
-                    new_price = current_init_price
+                    spend_amount = usdt_proceeds if usdt_proceeds >= 5.0 else (usdt_amount if usdt_amount >= 5.0 else 50.0)
+                    buy_order = place_market_buy_quote(client, sym, spend_amount)
+                    
+                    new_bought_qty = 0.0
+                    try:
+                        new_bought_qty = float(buy_order.get("executedQty", 0.0))
+                    except (ValueError, TypeError):
+                        pass
+                    if new_bought_qty <= 0:
+                        bal_info = client.get_asset_balance(asset=sym.replace("USDT", ""))
+                        new_bought_qty = float(bal_info.get("free", 0.0)) if bal_info else qty
 
-                if target_type == "percentage":
-                    new_target = round(new_price * (1.0 + target_percentage / 100.0), 6)
-                else:
-                    ratio = current_target_price / current_init_price if current_init_price > 0 else (1.0 + target_percentage / 100.0)
-                    if ratio <= 1.0:
-                        ratio = 1.10
-                    new_target = round(new_price * ratio, 6)
+                    try:
+                        new_price = get_current_price(sym, client=client)
+                    except Exception:
+                        new_price = current_init_price
 
-                _bot_config.update({
-                    "symbol": sym,
-                    "current_price": new_price,
-                    "target_price": new_target,
-                })
+                    if target_type == "percentage":
+                        new_target = round(new_price * (1.0 + target_percentage / 100.0), 6)
+                    else:
+                        ratio = current_target_price / current_init_price if current_init_price > 0 else (1.0 + target_percentage / 100.0)
+                        if ratio <= 1.0:
+                            ratio = 1.10
+                        new_target = round(new_price * ratio, 6)
 
-                _push_log(
-                    "info",
-                    f"🚀 RESTARTED AUTOMATICALLY: Monitoring {sym} @ initial ${new_price:,.6f} (New Target: ${new_target:,.6f})"
-                )
+                    _bot_config.update({
+                        "symbol": sym,
+                        "current_price": new_price,
+                        "target_price": new_target,
+                        "quantity": new_bought_qty,
+                        "usdt_amount": round(spend_amount, 2),
+                    })
 
-                start_monitoring_for_symbol(
-                    current_sym=sym,
-                    current_qty=qty,
-                    current_init_price=new_price,
-                    current_target_price=new_target,
-                )
+                    _push_log(
+                        "success",
+                        f"🚀 RE-BOUGHT {new_bought_qty} {sym} @ ${new_price:,.6f}! New Profit Target: ${new_target:,.6f} (+{target_percentage:.2f}%)"
+                    )
+
+                    start_monitoring_for_symbol(
+                        current_sym=sym,
+                        current_qty=new_bought_qty,
+                        current_init_price=new_price,
+                        current_target_price=new_target,
+                    )
+                except Exception as rebuy_err:
+                    _push_log("error", f"❌ Failed to re-buy {sym} on auto-restart: {rebuy_err}")
+                    _push_status("error")
             else:
                 _push_status("triggered")
                 _push_log("info", "🏁 Trading completed — bot stopped until manually restarted.")

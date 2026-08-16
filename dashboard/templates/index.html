@@ -196,10 +196,10 @@
         <div class="form-group">
           <label class="form-label" for="auto-restart-on-trigger">Action on Goal Reached (Profit Take)</label>
           <select id="auto-restart-on-trigger" class="form-input">
+            <option value="true">🔄 Re-Buy Same Coin & Restart (Continuous Profit Loop)</option>
             <option value="false">🏁 Stop Trading (Close Position)</option>
-            <option value="true">🔄 Auto-Restart Bot Automatically</option>
           </select>
-          <span class="form-hint">Choose whether to automatically restart the bot with same settings after selling at target</span>
+          <span class="form-hint">When profit target is hit: sells, re-buys the same coin, and monitors next target. (Converts coin ONLY if price drops).</span>
         </div>
 
         <!-- Actions -->
