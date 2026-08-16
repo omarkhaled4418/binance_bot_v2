@@ -666,8 +666,8 @@ def api_start():
 
             # ── Auto-Convert logic: Sell current coin & Buy Top 4H Gainer ──
             if auto_convert:
-                # Check if exclusion list reached 5 coins and reset
-                if len(_session_traded_symbols) >= 5:
+                # Check if exclusion list reached 3 coins and reset
+                if len(_session_traded_symbols) >= 3:
                     _push_log(
                         "info",
                         f"🧹 Excluded coins list reached {len(_session_traded_symbols)} coins ({list(_session_traded_symbols)}). "
@@ -685,10 +685,10 @@ def api_start():
                     top_price = top_gainer["current_price"]
                     _session_traded_symbols.add(top_sym)
 
-                    if len(_session_traded_symbols) >= 5:
+                    if len(_session_traded_symbols) >= 3:
                         _push_log(
                             "info",
-                            f"🧹 Excluded list reached 5 coins after adding {top_sym}. "
+                            f"🧹 Excluded list reached 3 coins after adding {top_sym}. "
                             f"Resetting list to only include current holding ({top_sym})."
                         )
                         _session_traded_symbols.clear()
