@@ -60,7 +60,20 @@ def find_top_gainer_4h(
         f"[Strategy] Scanning Binance market for Top Gainer (Minimum 1H Gain ≥ +{min_1h_gain_pct}%, excluding {excluded_set}) …"
     )
 
-    # 1. Fetch 24h tickers to filter liquid USDT pairs
+    # 1. Fetch tradable symbols on the target client exchange (e.g. Testnet vs Live)
+    supported_symbols = set()
+    if client:
+        try:
+            ex_info = client.get_exchange_info()
+            supported_symbols = {
+                s["symbol"] for s in ex_info.get("symbols", [])
+                if s.get("status") == "TRADING"
+            }
+            log.info(f"[Strategy] Client exchange supports {len(supported_symbols)} trading pairs.")
+        except Exception as e:
+            log.warning(f"[Strategy] Could not fetch client exchange info: {e}")
+
+    # 2. Fetch 24h tickers to filter liquid USDT pairs
     try:
         resp = http_requests.get(_TICKER_24HR_URL, timeout=10)
         resp.raise_for_status()
@@ -76,6 +89,9 @@ def find_top_gainer_4h(
             continue
         if sym in _EXCLUDED_PAIRS or sym in excluded_set:
             continue
+        # If client exchange symbols were loaded, ensure symbol exists on target exchange
+        if supported_symbols and sym not in supported_symbols:
+            continue
         try:
             quote_vol = float(t.get("quoteVolume", 0))
             price_change_pct = float(t.get("priceChangePercent", 0))
@@ -89,7 +105,22 @@ def find_top_gainer_4h(
             continue
 
     if not candidates:
-        raise ValueError("No eligible USDT trading pairs found matching volume and positive gain criteria.")
+        # If strict volume filter yielded 0 pairs (especially on testnet), relax volume requirement
+        for t in tickers:
+            sym = t.get("symbol", "")
+            if not sym.endswith("USDT") or sym in _EXCLUDED_PAIRS or sym in excluded_set:
+                continue
+            if supported_symbols and sym not in supported_symbols:
+                continue
+            price_change_pct = float(t.get("priceChangePercent", 0))
+            candidates.append({
+                "symbol": sym,
+                "quote_volume_24h": float(t.get("quoteVolume", 0)),
+                "price_change_24h": price_change_pct,
+            })
+
+    if not candidates:
+        raise ValueError("No eligible USDT trading pairs found matching criteria on target exchange.")
 
     # Sort candidates by 24h price change and volume
     candidates.sort(key=lambda x: (x["price_change_24h"], x["quote_volume_24h"]), reverse=True)
