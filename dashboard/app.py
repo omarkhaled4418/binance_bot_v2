@@ -257,13 +257,16 @@ def api_quick_buy():
 
 @app.route("/api/manual-sell", methods=["POST"])
 def api_manual_sell():
-    """Place an immediate manual MARKET SELL order on Binance spot."""
+    """Place an immediate manual MARKET SELL order on Binance spot (Sell All or Custom Quantity)."""
     global _monitor
     data = request.get_json(force=True)
     api_key = str(data.get("api_key", "")).strip()
     api_secret = str(data.get("api_secret", "")).strip()
     testnet = bool(data.get("testnet", True))
     symbol = str(data.get("symbol", "")).strip().upper()
+    sell_mode = str(data.get("sell_mode", "all")).strip().lower()  # "all" or "quantity"
+    quantity_type = str(data.get("quantity_type", "coin")).strip().lower()  # "coin" or "usdt"
+
     try:
         raw_qty = float(data.get("quantity", 0))
     except (ValueError, TypeError):
@@ -275,13 +278,24 @@ def api_manual_sell():
     try:
         client = get_client(testnet=testnet, api_key=api_key, api_secret=api_secret)
         base_asset = symbol.replace("USDT", "")
-        
-        # If quantity <= 0, fetch available balance to sell 100%
-        if raw_qty <= 0:
-            bal_info = client.get_asset_balance(asset=base_asset)
-            raw_qty = float(bal_info.get("free", 0)) if bal_info else 0.0
-            if raw_qty <= 0:
-                return jsonify({"error": f"You have 0 {base_asset} available in your Spot Wallet to sell."}), 400
+        bal_info = client.get_asset_balance(asset=base_asset)
+        total_free = float(bal_info.get("free", 0)) if bal_info else 0.0
+
+        if total_free <= 0:
+            return jsonify({"error": f"You have 0 {base_asset} available in your Spot Wallet to sell."}), 400
+
+        if sell_mode == "all" or raw_qty <= 0:
+            qty_to_sell = total_free
+        else:
+            if quantity_type == "usdt":
+                cur_price = get_current_price(symbol, client=client)
+                qty_to_sell = raw_qty / cur_price if cur_price > 0 else 0.0
+            else:
+                qty_to_sell = raw_qty
+
+            if qty_to_sell > total_free:
+                log.warning(f"Requested sell qty {qty_to_sell} exceeds available balance {total_free}. Adjusting to {total_free}.")
+                qty_to_sell = total_free
 
         # Stop active monitor if running
         if _monitor and _monitor.is_running:
@@ -289,8 +303,8 @@ def api_manual_sell():
             _push_log("warning", f"⏹️ Active price monitor stopped due to manual market sell on {symbol}.")
             _push_status("idle")
 
-        _push_log("warning", f"⚡ MANUAL SELL INITIATED: Placing MARKET SELL for {raw_qty} {symbol} …")
-        order = place_market_sell(client, symbol, raw_qty)
+        _push_log("warning", f"⚡ MANUAL SELL INITIATED: Placing MARKET SELL for {qty_to_sell} {symbol} ({sell_mode.upper()} mode) …")
+        order = place_market_sell(client, symbol, qty_to_sell)
 
         usdt_proceeds = 0.0
         try:
@@ -300,13 +314,13 @@ def api_manual_sell():
         if usdt_proceeds <= 0:
             try:
                 cur_p = get_current_price(symbol, client=client)
-                usdt_proceeds = raw_qty * cur_p
+                usdt_proceeds = qty_to_sell * cur_p
             except Exception:
                 pass
 
         _push_log(
             "success",
-            f"⚡ MANUAL MARKET SELL EXECUTED! Sold {raw_qty} {symbol} for ${usdt_proceeds:.2f} USDT | Order ID={order.get('orderId')} | Status={order.get('status')}."
+            f"⚡ MANUAL MARKET SELL EXECUTED! Sold {qty_to_sell} {symbol} for ${usdt_proceeds:.2f} USDT | Order ID={order.get('orderId')} | Status={order.get('status')}."
         )
 
         # Fetch new balance
@@ -317,7 +331,7 @@ def api_manual_sell():
             "ok": True,
             "order": order,
             "sold_symbol": symbol,
-            "sold_quantity": raw_qty,
+            "sold_quantity": qty_to_sell,
             "usdt_proceeds": usdt_proceeds,
             "new_balance": new_free,
         })

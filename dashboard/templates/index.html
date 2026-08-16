@@ -438,6 +438,86 @@
   </div>
 </div>
 
+<!-- ── Manual Market Sell Modal (Option 1: Sell All, Option 2: Custom Qty) ── -->
+<div class="overlay" id="manual-sell-modal" style="display:none">
+  <div class="overlay-card modal-card">
+    <div class="modal-header">
+      <div class="modal-title">
+        <span class="card-icon">⚡</span> Manual Market Sell
+      </div>
+      <button type="button" id="modal-sell-close" class="btn-ghost-sm">✕</button>
+    </div>
+
+    <form id="modal-sell-form" class="modal-body">
+      <!-- Active Coin Info -->
+      <div class="form-group">
+        <div class="label-row">
+          <label class="form-label">Monitored Coin</label>
+          <span id="modal-sell-bal-hint" class="wallet-hint">Available: —</span>
+        </div>
+        <input type="text" id="modal-sell-symbol" class="form-input font-mono" readonly />
+      </div>
+
+      <!-- Option Selector -->
+      <div class="form-group">
+        <label class="form-label">Select Sell Mode:</label>
+        <div class="toggle-group" style="margin-bottom: 8px;">
+          <button type="button" id="btn-sell-opt-all" class="toggle-btn active">
+            🟢 Option 1: Sell All (100%)
+          </button>
+          <button type="button" id="btn-sell-opt-qty" class="toggle-btn">
+            🟡 Option 2: Set Quantity
+          </button>
+        </div>
+      </div>
+
+      <!-- Custom Quantity Section (Hidden when Sell All is selected) -->
+      <div id="modal-sell-qty-section" class="form-group hidden">
+        <div class="label-row">
+          <label class="form-label" id="modal-sell-qty-label" for="modal-sell-qty-input">Amount to Sell</label>
+          <select id="modal-sell-qty-type" class="form-input font-mono" style="width: auto; padding: 2px 8px; font-size: 0.75rem;">
+            <option value="coin">In Coins</option>
+            <option value="usdt">In USDT ($)</option>
+          </select>
+        </div>
+        <input type="number" id="modal-sell-qty-input" class="form-input font-mono" placeholder="Enter amount to sell" min="0" step="any" />
+        
+        <!-- Preset quick buttons -->
+        <div class="preset-chips-row">
+          <button type="button" class="btn-sell-preset-chip" data-pct="25">25%</button>
+          <button type="button" class="btn-sell-preset-chip" data-pct="50">50%</button>
+          <button type="button" class="btn-sell-preset-chip" data-pct="75">75%</button>
+          <button type="button" class="btn-sell-preset-chip accent-chip" data-pct="100">MAX (100%)</button>
+        </div>
+      </div>
+
+      <!-- Estimate Box -->
+      <div class="modal-estimate-box" id="modal-sell-estimate-box">
+        <div class="est-row">
+          <span class="est-label">Order Action:</span>
+          <strong id="modal-sell-action-desc" class="est-val" style="color: var(--yellow);">Sell 100% Available Balance</strong>
+        </div>
+        <div class="est-row est-sub">
+          <span class="est-label">Estimated Proceeds:</span>
+          <span id="modal-sell-est-proceeds">—</span>
+        </div>
+      </div>
+
+      <div id="modal-sell-status" class="api-verify-result hidden"></div>
+
+      <!-- Action Buttons -->
+      <div class="form-actions modal-actions">
+        <button type="submit" id="modal-sell-confirm-btn" class="btn btn-warning">
+          <span class="btn-icon">⚡</span> Execute Market Sell
+        </button>
+        <button type="button" id="modal-sell-cancel-btn" class="btn btn-ghost">
+          Cancel
+        </button>
+      </div>
+    </form>
+  </div>
+</div>
+
 <script src="/static/js/app.js"></script>
 </body>
 </html>

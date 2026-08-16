@@ -101,6 +101,25 @@ const convertAllConfirmCheck  = document.getElementById('convert-all-confirm-che
 const modalConvertAllStatus   = document.getElementById('modal-convert-all-status');
 const modalConvertAllSubmitBtn = document.getElementById('modal-convert-all-submit-btn');
 
+// Manual Sell Modal refs
+const manualSellModal         = document.getElementById('manual-sell-modal');
+const modalSellClose          = document.getElementById('modal-sell-close');
+const modalSellCancelBtn      = document.getElementById('modal-sell-cancel-btn');
+const modalSellForm           = document.getElementById('modal-sell-form');
+const modalSellSymbol         = document.getElementById('modal-sell-symbol');
+const modalSellBalHint        = document.getElementById('modal-sell-bal-hint');
+const btnSellOptAll           = document.getElementById('btn-sell-opt-all');
+const btnSellOptQty           = document.getElementById('btn-sell-opt-qty');
+const modalSellQtySection     = document.getElementById('modal-sell-qty-section');
+const modalSellQtyLabel       = document.getElementById('modal-sell-qty-label');
+const modalSellQtyInput       = document.getElementById('modal-sell-qty-input');
+const modalSellQtyType        = document.getElementById('modal-sell-qty-type');
+const modalSellActionDesc     = document.getElementById('modal-sell-action-desc');
+const modalSellEstProceeds    = document.getElementById('modal-sell-est-proceeds');
+const modalSellStatus         = document.getElementById('modal-sell-status');
+const modalSellConfirmBtn     = document.getElementById('modal-sell-confirm-btn');
+const sellPresetChips         = document.querySelectorAll('.btn-sell-preset-chip[data-pct]');
+
 // ── State ─────────────────────────────────────────────────────────────────────
 let currentMode   = 'testnet';  // 'testnet' | 'live'
 let botStatus     = 'idle';     // 'idle' | 'running' | 'triggered' | 'error'
@@ -985,27 +1004,148 @@ stopBtn.addEventListener('click', async () => {
   fetchSpotBalances();
 });
 
-// ── Manual Market Sell Button ────────────────────────────────────────────────
+// ── Manual Market Sell Modal Logic (Option 1: Sell All, Option 2: Set Qty) ────
+let currentSellMode = 'all'; // 'all' | 'quantity'
+
+function updateManualSellEstimate() {
+  const sym = modalSellSymbol ? modalSellSymbol.value.trim().toUpperCase() : '';
+  const base = sym.replace('USDT', '') || cachedBalances.coin_asset || 'COIN';
+  const avail = cachedBalances.coin_free || 0;
+  const price = currentPrice || (cachedBalances.coin_value_usdt > 0 && avail > 0 ? (cachedBalances.coin_value_usdt / avail) : 0);
+
+  if (modalSellBalHint) {
+    modalSellBalHint.textContent = `Available: ${fmt(avail)} ${base}`;
+  }
+
+  if (currentSellMode === 'all') {
+    if (modalSellActionDesc) modalSellActionDesc.textContent = `Sell 100% (${fmt(avail)} ${base})`;
+    const estVal = avail * price;
+    if (modalSellEstProceeds) {
+      modalSellEstProceeds.textContent = price > 0 ? `≈ $${fmt(estVal, 2)} USDT (@ $${fmt(price, 4)})` : `${fmt(avail)} ${base}`;
+    }
+  } else {
+    const qtyType = modalSellQtyType ? modalSellQtyType.value : 'coin';
+    const rawVal = modalSellQtyInput ? (parseFloat(modalSellQtyInput.value) || 0) : 0;
+    if (qtyType === 'coin') {
+      if (modalSellActionDesc) modalSellActionDesc.textContent = `Sell ${fmt(rawVal)} ${base}`;
+      const estVal = rawVal * price;
+      if (modalSellEstProceeds) {
+        modalSellEstProceeds.textContent = price > 0 ? `≈ $${fmt(estVal, 2)} USDT (@ $${fmt(price, 4)})` : `${fmt(rawVal)} ${base}`;
+      }
+    } else {
+      if (modalSellActionDesc) modalSellActionDesc.textContent = `Sell $${fmt(rawVal, 2)} USDT worth`;
+      const estCoin = price > 0 ? (rawVal / price) : 0;
+      if (modalSellEstProceeds) {
+        modalSellEstProceeds.textContent = price > 0 ? `≈ ${fmt(estCoin)} ${base} (@ $${fmt(price, 4)})` : `$${fmt(rawVal, 2)} USDT`;
+      }
+    }
+  }
+}
+
+function openManualSellModal() {
+  const sym = symbolInput.value.trim().toUpperCase() || 'PORTALUSDT';
+  if (modalSellSymbol) modalSellSymbol.value = sym;
+  if (modalSellStatus) {
+    modalSellStatus.className = 'api-verify-result hidden';
+    modalSellStatus.textContent = '';
+  }
+  if (modalSellQtyInput) modalSellQtyInput.value = '';
+
+  // Default to Option 1: Sell All
+  setSellOption('all');
+  if (manualSellModal) manualSellModal.style.display = 'flex';
+  updateManualSellEstimate();
+}
+
+function closeManualSellModal() {
+  if (manualSellModal) manualSellModal.style.display = 'none';
+}
+
+function setSellOption(mode) {
+  currentSellMode = mode;
+  if (btnSellOptAll && btnSellOptQty) {
+    btnSellOptAll.classList.toggle('active', mode === 'all');
+    btnSellOptQty.classList.toggle('active', mode === 'quantity');
+  }
+  if (modalSellQtySection) {
+    if (mode === 'all') {
+      modalSellQtySection.classList.add('hidden');
+    } else {
+      modalSellQtySection.classList.remove('hidden');
+    }
+  }
+  updateManualSellEstimate();
+}
+
+if (btnSellOptAll) btnSellOptAll.addEventListener('click', () => setSellOption('all'));
+if (btnSellOptQty) btnSellOptQty.addEventListener('click', () => setSellOption('quantity'));
+
+if (modalSellClose) modalSellClose.addEventListener('click', closeManualSellModal);
+if (modalSellCancelBtn) modalSellCancelBtn.addEventListener('click', closeManualSellModal);
+
+if (modalSellQtyType) {
+  modalSellQtyType.addEventListener('change', () => {
+    if (modalSellQtyLabel) {
+      modalSellQtyLabel.textContent = modalSellQtyType.value === 'usdt' ? 'Amount in USDT ($)' : 'Amount in Coins';
+    }
+    updateManualSellEstimate();
+  });
+}
+
+if (modalSellQtyInput) {
+  modalSellQtyInput.addEventListener('input', updateManualSellEstimate);
+}
+
+sellPresetChips.forEach(btn => {
+  btn.addEventListener('click', () => {
+    const pct = parseFloat(btn.getAttribute('data-pct')) || 100;
+    const avail = cachedBalances.coin_free || 0;
+    const price = currentPrice || (cachedBalances.coin_value_usdt > 0 && avail > 0 ? (cachedBalances.coin_value_usdt / avail) : 0);
+    const qtyType = modalSellQtyType ? modalSellQtyType.value : 'coin';
+
+    if (qtyType === 'coin') {
+      const calcQty = avail * (pct / 100);
+      if (modalSellQtyInput) modalSellQtyInput.value = calcQty > 0 ? calcQty.toFixed(4) : '0';
+    } else {
+      const totalVal = avail * price;
+      const calcVal = totalVal * (pct / 100);
+      if (modalSellQtyInput) modalSellQtyInput.value = calcVal > 0 ? calcVal.toFixed(2) : '0';
+    }
+    updateManualSellEstimate();
+  });
+});
+
 if (manualSellBtn) {
-  manualSellBtn.addEventListener('click', async () => {
+  manualSellBtn.addEventListener('click', () => {
     clearError();
     const symbol = symbolInput.value.trim().toUpperCase();
+    if (!symbol) {
+      return showError('Please enter or select a coin symbol (e.g. PORTALUSDT or BARUSDT) first.');
+    }
+    openManualSellModal();
+  });
+}
+
+if (modalSellForm) {
+  modalSellForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const symbol = modalSellSymbol ? modalSellSymbol.value.trim().toUpperCase() : symbolInput.value.trim().toUpperCase();
     const isTestnet = currentMode === 'testnet';
     const key = apiKeyInput.value.trim();
     const secret = apiSecretInput.value.trim();
+    const qtyType = modalSellQtyType ? modalSellQtyType.value : 'coin';
+    const rawVal = modalSellQtyInput ? parseFloat(modalSellQtyInput.value) : 0;
 
-    if (!symbol) {
-      return showError('Please enter or select a coin symbol (e.g. PORTALUSDT or BARUSDT) to sell.');
+    if (currentSellMode === 'quantity' && (isNaN(rawVal) || rawVal <= 0)) {
+      modalSellStatus.className = 'api-verify-result error';
+      modalSellStatus.textContent = 'Please enter a valid quantity > 0 to sell.';
+      return;
     }
 
-    const modeStr = isTestnet ? 'TESTNET' : '🔴 LIVE (REAL FUNDS)';
-    const confirmed = confirm(
-      `⚡ MANUAL MARKET SELL CONFIRMATION\n\nMode: ${modeStr}\nSymbol: ${symbol}\n\nAre you sure you want to execute an immediate MARKET SELL for your available holdings on Binance?`
-    );
-    if (!confirmed) return;
-
-    manualSellBtn.disabled = true;
-    manualSellBtn.innerHTML = '<span class="btn-icon">⚡</span> Selling…';
+    modalSellConfirmBtn.disabled = true;
+    modalSellConfirmBtn.innerHTML = '<span class="btn-icon">⚡</span> Selling…';
+    modalSellStatus.className = 'api-verify-result';
+    modalSellStatus.textContent = `⏳ Placing market sell for ${symbol}…`;
 
     try {
       const res = await fetch('/api/manual-sell', {
@@ -1013,31 +1153,49 @@ if (manualSellBtn) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           symbol: symbol,
-          quantity: 0,
+          sell_mode: currentSellMode,
+          quantity: currentSellMode === 'all' ? 0 : rawVal,
+          quantity_type: qtyType,
           testnet: isTestnet,
           api_key: key,
           api_secret: secret,
         }),
       });
 
-      const data = await res.json();
+      const text = await res.text();
+      let data;
+      try {
+        data = JSON.parse(text);
+      } catch {
+        throw new Error('Invalid response from server.');
+      }
 
       if (!res.ok || !data.ok) {
-        showError(data.error || 'Manual market sell failed.');
-        appendLog('error', `❌ Manual sell failed for ${symbol}: ${data.error || 'Unknown error'}`);
+        modalSellStatus.className = 'api-verify-result error';
+        modalSellStatus.innerHTML = `<strong>❌ Sell Failed:</strong><br>${data.error || 'Check balance and NOTIONAL filter.'}`;
       } else {
         setStatus('idle');
+        modalSellStatus.className = 'api-verify-result success';
+        modalSellStatus.innerHTML = `
+          <strong>⚡ Market Sell Executed!</strong><br>
+          • Mode: <strong>${currentSellMode === 'all' ? 'Sell All (100%)' : 'Custom Quantity'}</strong><br>
+          • Sold: <strong>${fmt(data.sold_quantity)} ${data.sold_symbol}</strong><br>
+          • Received: <strong>$${fmt(data.usdt_proceeds, 2)} USDT</strong><br>
+          • Remaining Balance: ${fmt(data.new_balance)}
+        `;
         appendLog(
           'success',
-          `⚡ MANUAL MARKET SELL SUCCESS: Sold ${fmt(data.sold_quantity)} ${data.sold_symbol} for $${fmt(data.usdt_proceeds, 2)} USDT!`
+          `⚡ MANUAL MARKET SELL: Sold ${fmt(data.sold_quantity)} ${data.sold_symbol} for $${fmt(data.usdt_proceeds, 2)} USDT!`
         );
         await fetchSpotBalances(symbol);
+        setTimeout(closeManualSellModal, 2000);
       }
     } catch (err) {
-      showError('Network error executing manual sell: ' + err.message);
+      modalSellStatus.className = 'api-verify-result error';
+      modalSellStatus.textContent = '❌ ' + err.message;
     } finally {
-      manualSellBtn.disabled = false;
-      manualSellBtn.innerHTML = '<span class="btn-icon">⚡</span> Sell Now';
+      modalSellConfirmBtn.disabled = false;
+      modalSellConfirmBtn.innerHTML = '<span class="btn-icon">⚡</span> Execute Market Sell';
     }
   });
 }
