@@ -322,6 +322,18 @@ body {
   color: #fff;
 }
 
+.btn-warning {
+  background: rgba(245, 158, 11, 0.15);
+  border: 1px solid rgba(245, 158, 11, 0.4);
+  color: var(--yellow);
+}
+
+.btn-warning:hover:not(:disabled) {
+  background: var(--yellow);
+  color: #0b0e1a;
+  box-shadow: 0 4px 16px rgba(245, 158, 11, 0.25);
+}
+
 .btn-ghost {
   background: transparent;
   border: 1px solid var(--border);

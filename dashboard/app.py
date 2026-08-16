@@ -255,6 +255,77 @@ def api_quick_buy():
         return jsonify({"ok": False, "error": str(exc)}), 400
 
 
+@app.route("/api/manual-sell", methods=["POST"])
+def api_manual_sell():
+    """Place an immediate manual MARKET SELL order on Binance spot."""
+    global _monitor
+    data = request.get_json(force=True)
+    api_key = str(data.get("api_key", "")).strip()
+    api_secret = str(data.get("api_secret", "")).strip()
+    testnet = bool(data.get("testnet", True))
+    symbol = str(data.get("symbol", "")).strip().upper()
+    try:
+        raw_qty = float(data.get("quantity", 0))
+    except (ValueError, TypeError):
+        raw_qty = 0.0
+
+    if not symbol:
+        return jsonify({"error": "Coin symbol is required."}), 400
+
+    try:
+        client = get_client(testnet=testnet, api_key=api_key, api_secret=api_secret)
+        base_asset = symbol.replace("USDT", "")
+        
+        # If quantity <= 0, fetch available balance to sell 100%
+        if raw_qty <= 0:
+            bal_info = client.get_asset_balance(asset=base_asset)
+            raw_qty = float(bal_info.get("free", 0)) if bal_info else 0.0
+            if raw_qty <= 0:
+                return jsonify({"error": f"You have 0 {base_asset} available in your Spot Wallet to sell."}), 400
+
+        # Stop active monitor if running
+        if _monitor and _monitor.is_running:
+            _monitor.stop()
+            _push_log("warning", f"⏹️ Active price monitor stopped due to manual market sell on {symbol}.")
+            _push_status("idle")
+
+        _push_log("warning", f"⚡ MANUAL SELL INITIATED: Placing MARKET SELL for {raw_qty} {symbol} …")
+        order = place_market_sell(client, symbol, raw_qty)
+
+        usdt_proceeds = 0.0
+        try:
+            usdt_proceeds = float(order.get("cummulativeQuoteQty", 0.0))
+        except (ValueError, TypeError):
+            pass
+        if usdt_proceeds <= 0:
+            try:
+                cur_p = get_current_price(symbol, client=client)
+                usdt_proceeds = raw_qty * cur_p
+            except Exception:
+                pass
+
+        _push_log(
+            "success",
+            f"⚡ MANUAL MARKET SELL EXECUTED! Sold {raw_qty} {symbol} for ${usdt_proceeds:.2f} USDT | Order ID={order.get('orderId')} | Status={order.get('status')}."
+        )
+
+        # Fetch new balance
+        new_bal_info = client.get_asset_balance(asset=base_asset)
+        new_free = float(new_bal_info.get("free", 0)) if new_bal_info else 0.0
+
+        return jsonify({
+            "ok": True,
+            "order": order,
+            "sold_symbol": symbol,
+            "sold_quantity": raw_qty,
+            "usdt_proceeds": usdt_proceeds,
+            "new_balance": new_free,
+        })
+    except Exception as exc:
+        _push_log("error", f"❌ Manual Market Sell Failed for {symbol}: {exc}")
+        return jsonify({"ok": False, "error": str(exc)}), 400
+
+
 @app.route("/api/start", methods=["POST"])
 def api_start():
     """Start the price monitor / sell bot."""

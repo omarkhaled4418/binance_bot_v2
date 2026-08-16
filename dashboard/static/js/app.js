@@ -49,6 +49,7 @@ const checkPriceBtn    = document.getElementById('check-price-btn');
 const currentPriceHint = document.getElementById('current-price-hint');
 const startBtn         = document.getElementById('start-btn');
 const stopBtn          = document.getElementById('stop-btn');
+const manualSellBtn    = document.getElementById('manual-sell-btn');
 const formError        = document.getElementById('form-error');
 
 // Stat & chart refs
@@ -831,6 +832,63 @@ stopBtn.addEventListener('click', async () => {
   setStatus('idle');
   fetchSpotBalances();
 });
+
+// ── Manual Market Sell Button ────────────────────────────────────────────────
+if (manualSellBtn) {
+  manualSellBtn.addEventListener('click', async () => {
+    clearError();
+    const symbol = symbolInput.value.trim().toUpperCase();
+    const isTestnet = currentMode === 'testnet';
+    const key = apiKeyInput.value.trim();
+    const secret = apiSecretInput.value.trim();
+
+    if (!symbol) {
+      return showError('Please enter or select a coin symbol (e.g. PORTALUSDT or BARUSDT) to sell.');
+    }
+
+    const modeStr = isTestnet ? 'TESTNET' : '🔴 LIVE (REAL FUNDS)';
+    const confirmed = confirm(
+      `⚡ MANUAL MARKET SELL CONFIRMATION\n\nMode: ${modeStr}\nSymbol: ${symbol}\n\nAre you sure you want to execute an immediate MARKET SELL for your available holdings on Binance?`
+    );
+    if (!confirmed) return;
+
+    manualSellBtn.disabled = true;
+    manualSellBtn.innerHTML = '<span class="btn-icon">⚡</span> Selling…';
+
+    try {
+      const res = await fetch('/api/manual-sell', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          symbol: symbol,
+          quantity: 0,
+          testnet: isTestnet,
+          api_key: key,
+          api_secret: secret,
+        }),
+      });
+
+      const data = await res.json();
+
+      if (!res.ok || !data.ok) {
+        showError(data.error || 'Manual market sell failed.');
+        appendLog('error', `❌ Manual sell failed for ${symbol}: ${data.error || 'Unknown error'}`);
+      } else {
+        setStatus('idle');
+        appendLog(
+          'success',
+          `⚡ MANUAL MARKET SELL SUCCESS: Sold ${fmt(data.sold_quantity)} ${data.sold_symbol} for $${fmt(data.usdt_proceeds, 2)} USDT!`
+        );
+        await fetchSpotBalances(symbol);
+      }
+    } catch (err) {
+      showError('Network error executing manual sell: ' + err.message);
+    } finally {
+      manualSellBtn.disabled = false;
+      manualSellBtn.innerHTML = '<span class="btn-icon">⚡</span> Sell Now';
+    }
+  });
+}
 
 // ── Triggered overlay ─────────────────────────────────────────────────────────
 function showTriggered() {
