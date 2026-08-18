@@ -1229,7 +1229,7 @@ socket.on('price_update', ({ symbol, price, target }) => {
 
 socket.on('price_drop_alert', (payload) => {
   if (payload.event === 'AUTO_CONVERT_SUCCESS') {
-    appendLog('success', `🔄 AUTO-CONVERT COMPLETE! Sold ${payload.symbol} -> Bought ${payload.bought_quantity} ${payload.converted_to_symbol} (+${payload.top_gainer_4h_gain_pct}% 4H Gainer)!`);
+    appendLog('success', `🔄 AUTO-CONVERT COMPLETE! Sold ${payload.symbol} -> Bought ${payload.bought_quantity} ${payload.converted_to_symbol} (+${payload.top_gainer_1h_gain_pct}% 1H Gainer)!`);
     fetchSpotBalances(payload.converted_to_symbol);
   } else {
     appendLog('warning', `🚨 PRICE DROP ALERT: ${payload.symbol} dropped ${payload.actual_drop_percentage}% to $${fmt(payload.current_price)}.`);

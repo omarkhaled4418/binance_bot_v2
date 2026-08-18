@@ -15,8 +15,14 @@ log = logging.getLogger(__name__)
 def _round_step_size(quantity: float, step_size: str) -> float:
     """Round quantity down to the nearest valid step size."""
     step = float(step_size)
-    precision = int(round(-math.log(step, 10), 0))
-    return round(math.floor(quantity / step) * step, precision)
+    if step <= 0:
+        return quantity
+    # Derive precision from the string representation (handles 0.05, 0.20, etc.)
+    if '.' in step_size:
+        precision = len(step_size.rstrip('0').split('.')[1]) if step_size.rstrip('0').split('.')[1] else 0
+    else:
+        precision = 0
+    return round(math.floor(quantity / step) * step, max(precision, 0))
 
 
 def place_market_sell(
@@ -149,7 +155,9 @@ def place_market_buy_quote(
             min_notional = float(f.get("minNotional", f.get("notional", 5.0)))
             break
 
-    quote_qty = round(quote_quantity, min(quote_precision, 8))
+    # Floor-truncate to avoid rounding up beyond available balance
+    trunc_precision = min(quote_precision, 8)
+    quote_qty = math.floor(quote_quantity * 10**trunc_precision) / (10**trunc_precision)
     if quote_qty < min_notional:
         raise ValueError(
             f"Quote order amount ({quote_qty} {quote_asset}) is below minimum notional filter ({min_notional} {quote_asset}) for {symbol}."

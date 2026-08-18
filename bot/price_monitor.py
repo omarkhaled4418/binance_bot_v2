@@ -67,6 +67,7 @@ class PriceMonitor:
         self._running = False
         self._twm: ThreadedWebsocketManager | None = None
         self._thread: threading.Thread | None = None
+        self._last_tick_time: float = 0.0  # Watchdog: timestamp of last price tick
 
     # ── public API ────────────────────────────────────────────────────────
 
@@ -76,6 +77,7 @@ class PriceMonitor:
             return
         self._triggered = False
         self._running = True
+        self._last_tick_time = time.time()
         self._thread = threading.Thread(target=self._run, daemon=True)
         self._thread.start()
         log.info(f"[PriceMonitor] Started monitoring {self.symbol} @ target {self.target_price}")
@@ -120,9 +122,16 @@ class PriceMonitor:
 
             log.info(f"[PriceMonitor] WebSocket stream started: {stream_name}")
 
-            # Keep thread alive while running
+            # Keep thread alive while running, with watchdog check every 2 seconds
             while self._running:
-                time.sleep(0.5)
+                time.sleep(2)
+                # Watchdog: if no tick received for 60 seconds, log a warning
+                if self._running and (time.time() - self._last_tick_time) > 60:
+                    log.warning(
+                        f"[PriceMonitor] Watchdog: No price ticks received for {self.symbol} in 60s. "
+                        "Stream may be stalled."
+                    )
+                    self._last_tick_time = time.time()  # Reset to avoid spamming
 
         except Exception as exc:
             log.error(f"[PriceMonitor] Stream error: {exc}")
@@ -154,6 +163,9 @@ class PriceMonitor:
         if price <= 0:
             return
 
+        # Update watchdog timestamp
+        self._last_tick_time = time.time()
+
         # Fire price update to dashboard
         self.on_price(price)
 
@@ -167,10 +179,12 @@ class PriceMonitor:
                     f"[PriceMonitor] PRICE DROP ALERT! {self.symbol} price {price} dropped {actual_drop_pct:.2f}% (>= {self.drop_percentage}%)"
                 )
                 if self.on_drop:
-                    try:
-                        self.on_drop(self.symbol, price, self.initial_price, actual_drop_pct)
-                    except Exception as exc:
-                        log.error(f"[PriceMonitor] Error firing on_drop callback: {exc}")
+                    # Offload on_drop to background thread to avoid blocking WebSocket
+                    threading.Thread(
+                        target=self._safe_callback,
+                        args=("on_drop", self.on_drop, self.symbol, price, self.initial_price, actual_drop_pct),
+                        daemon=True,
+                    ).start()
 
         # Check trigger condition: price reached or exceeded target
         if price >= self.target_price:
@@ -179,9 +193,19 @@ class PriceMonitor:
             log.info(
                 f"[PriceMonitor] TRIGGER! {self.symbol} price {price} >= target {self.target_price}"
             )
-            try:
-                order = self.on_trigger(self.symbol, self.quantity)
-                log.info(f"[PriceMonitor] Sell order placed: {order}")
-            except Exception as exc:
-                log.error(f"[PriceMonitor] Sell order failed: {exc}")
-                self.on_error(f"Sell order failed: {exc}")
+            # Offload on_trigger to background thread to avoid blocking WebSocket
+            threading.Thread(
+                target=self._safe_callback,
+                args=("on_trigger", self.on_trigger, self.symbol, self.quantity),
+                daemon=True,
+            ).start()
+
+    def _safe_callback(self, name: str, callback, *args):
+        """Execute a callback safely in a background thread."""
+        try:
+            result = callback(*args)
+            if name == "on_trigger":
+                log.info(f"[PriceMonitor] {name} completed: {result}")
+        except Exception as exc:
+            log.error(f"[PriceMonitor] Error in {name} callback: {exc}")
+            self.on_error(f"{name} failed: {exc}")

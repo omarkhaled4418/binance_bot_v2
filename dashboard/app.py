@@ -8,6 +8,7 @@ import logging
 import sys
 import os
 import time
+import threading
 import requests
 from datetime import datetime
 
@@ -40,6 +41,7 @@ _monitor: PriceMonitor | None = None
 _trade_log: list[dict] = []          # chronological list of log entries
 _bot_config: dict = {}               # last submitted config
 _session_traded_symbols: set[str] = set() # tracked traded symbols in session
+_state_lock = threading.Lock()       # protects _monitor, _trade_log, _bot_config
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -715,6 +717,14 @@ def api_start():
                     )
 
                     new_bought_qty = conversion["bought_quantity"]
+
+                    # Safety: if executedQty was 0, query actual balance
+                    if new_bought_qty <= 0:
+                        top_base = top_sym.replace("USDT", "")
+                        bal_info = client.get_asset_balance(asset=top_base)
+                        new_bought_qty = float(bal_info.get("free", 0.0)) if bal_info else 0.0
+                        if new_bought_qty <= 0:
+                            raise ValueError(f"Bought 0 {top_sym} after conversion — cannot start monitor.")
 
                     _push_log(
                         "success",

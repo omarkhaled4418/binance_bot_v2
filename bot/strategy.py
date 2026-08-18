@@ -134,17 +134,19 @@ def find_top_gainer_1h(
             k_resp.raise_for_status()
             klines = k_resp.json()
             if len(klines) >= 2:
-                open_1h_ago = float(klines[-2][1])   # Open price of the completed 1h candle
+                # klines[-1][1] = open of current (forming) 1h candle = price 1 hour ago
+                # klines[-1][4] = current close price
+                open_1h = float(klines[-1][1])     # Open of current 1h candle
                 current_close = float(klines[-1][4]) # Current close price
 
-                if open_1h_ago > 0:
-                    gain_1h_pct = ((current_close - open_1h_ago) / open_1h_ago) * 100.0
+                if open_1h > 0:
+                    gain_1h_pct = ((current_close - open_1h) / open_1h) * 100.0
 
                     gainer_results.append({
                         "symbol": sym,
                         "gain_1h_pct": round(gain_1h_pct, 2),
                         "current_price": current_close,
-                        "open_1h_price": open_1h_ago,
+                        "open_1h_price": open_1h,
                         "quote_volume_24h": c["quote_volume_24h"],
                     })
         except Exception as exc:
