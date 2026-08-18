@@ -1,7 +1,7 @@
 """
 bot/strategy.py
 Market scanner and strategy helper.
-Finds the top gaining coin over the last 4 hours on Binance USDT spot market.
+Finds the top gaining coin over the last 1 hour on Binance USDT spot market.
 """
 
 import logging
@@ -21,7 +21,7 @@ _EXCLUDED_PAIRS = {
 }
 
 
-def find_top_gainer_4h(
+def find_top_gainer_1h(
     client: Client | None = None,
     exclude_symbols: str | set[str] | list[str] = "",
     min_volume_usdt: float = 250_000.0,
@@ -29,9 +29,9 @@ def find_top_gainer_4h(
     top_candidates_count: int = 50,
 ) -> dict:
     """
-    Find the coin with the highest percentage price gain over the last 4 hours,
-    requiring AT LEAST +2% price increase in the last 1 hour.
-    Skips any symbols that haven't increased by at least 2% in the last hour,
+    Find the coin with the highest percentage price gain over the last 1 hour.
+    Requires AT LEAST +2% price increase in the last 1 hour.
+    Skips any symbols that haven't increased by at least min_1h_gain_pct in the last hour,
     and skips any symbols in exclude_symbols.
 
     Args:
@@ -44,10 +44,9 @@ def find_top_gainer_4h(
     Returns:
         dict: {
             "symbol": str,
-            "gain_4h_pct": float,
             "gain_1h_pct": float,
             "current_price": float,
-            "open_4h_price": float,
+            "open_1h_price": float,
             "quote_volume_24h": float
         }
     """
@@ -57,7 +56,7 @@ def find_top_gainer_4h(
         excluded_set = {s.strip().upper() for s in exclude_symbols if s}
 
     log.info(
-        f"[Strategy] Scanning Binance market for Top Gainer (Minimum 1H Gain ≥ +{min_1h_gain_pct}%, excluding {excluded_set}) …"
+        f"[Strategy] Scanning Binance market for Best 1H Gainer (Minimum 1H Gain ≥ +{min_1h_gain_pct}%, excluding {excluded_set}) …"
     )
 
     # 1. Fetch tradable symbols on the target client exchange (e.g. Testnet vs Live)
@@ -122,29 +121,27 @@ def find_top_gainer_4h(
     if not candidates:
         raise ValueError("No eligible USDT trading pairs found matching criteria on target exchange.")
 
-    # Sort candidates by 24h price change and volume
+    # Sort candidates by 24h price change and volume (pre-filter for kline scan)
     candidates.sort(key=lambda x: (x["price_change_24h"], x["quote_volume_24h"]), reverse=True)
     top_candidates = candidates[:top_candidates_count]
 
-    # 2. Query 1h klines (limit=6) to calculate exact 4h and 1h price gains
+    # 3. Query 1h klines (limit=3) to calculate exact 1h price gain
     gainer_results = []
     for c in top_candidates:
         sym = c["symbol"]
         try:
             k_resp = http_requests.get(
                 _KLINES_URL,
-                params={"symbol": sym, "interval": "1h", "limit": 6},
+                params={"symbol": sym, "interval": "1h", "limit": 3},
                 timeout=5,
             )
             k_resp.raise_for_status()
             klines = k_resp.json()
-            if len(klines) >= 5:
-                open_4h_ago = float(klines[-5][1])   # Open price 4h ago
-                open_1h_ago = float(klines[-2][1])   # Open price 1h ago
-                current_close = float(klines[-1][4]) # Current price
+            if len(klines) >= 2:
+                open_1h_ago = float(klines[-2][1])   # Open price of the completed 1h candle
+                current_close = float(klines[-1][4]) # Current close price
 
-                if open_4h_ago > 0 and open_1h_ago > 0:
-                    gain_4h_pct = ((current_close - open_4h_ago) / open_4h_ago) * 100.0
+                if open_1h_ago > 0:
                     gain_1h_pct = ((current_close - open_1h_ago) / open_1h_ago) * 100.0
 
                     # Check 1-hour minimum gain filter
@@ -156,10 +153,9 @@ def find_top_gainer_4h(
 
                     gainer_results.append({
                         "symbol": sym,
-                        "gain_4h_pct": round(gain_4h_pct, 2),
                         "gain_1h_pct": round(gain_1h_pct, 2),
                         "current_price": current_close,
-                        "open_4h_price": open_4h_ago,
+                        "open_1h_price": open_1h_ago,
                         "quote_volume_24h": c["quote_volume_24h"],
                     })
         except Exception as exc:
@@ -170,30 +166,27 @@ def find_top_gainer_4h(
         log.warning(
             f"[Strategy] No coins met the strict +{min_1h_gain_pct}% 1H gain threshold. Falling back to highest 1H gainer above 0% …"
         )
-        # Fallback: find best positive 1h gainer if none met +2%
+        # Fallback: find best positive 1h gainer if none met the threshold
         for c in top_candidates[:20]:
             sym = c["symbol"]
             try:
                 k_resp = http_requests.get(
                     _KLINES_URL,
-                    params={"symbol": sym, "interval": "1h", "limit": 6},
+                    params={"symbol": sym, "interval": "1h", "limit": 3},
                     timeout=5,
                 )
                 k_resp.raise_for_status()
                 klines = k_resp.json()
-                if len(klines) >= 5:
-                    open_4h_ago = float(klines[-5][1])
+                if len(klines) >= 2:
                     open_1h_ago = float(klines[-2][1])
                     current_close = float(klines[-1][4])
-                    if open_4h_ago > 0 and open_1h_ago > 0:
-                        gain_4h_pct = ((current_close - open_4h_ago) / open_4h_ago) * 100.0
+                    if open_1h_ago > 0:
                         gain_1h_pct = ((current_close - open_1h_ago) / open_1h_ago) * 100.0
                         gainer_results.append({
                             "symbol": sym,
-                            "gain_4h_pct": round(gain_4h_pct, 2),
                             "gain_1h_pct": round(gain_1h_pct, 2),
                             "current_price": current_close,
-                            "open_4h_price": open_4h_ago,
+                            "open_1h_price": open_1h_ago,
                             "quote_volume_24h": c["quote_volume_24h"],
                         })
             except Exception:
@@ -202,8 +195,8 @@ def find_top_gainer_4h(
     if not gainer_results:
         raise ValueError(f"No suitable gainers found on Binance USDT market.")
 
-    # Sort candidates by 1h gain and 4h gain
-    gainer_results.sort(key=lambda x: (x["gain_1h_pct"], x["gain_4h_pct"]), reverse=True)
+    # Sort by 1H gain (primary ranking)
+    gainer_results.sort(key=lambda x: x["gain_1h_pct"], reverse=True)
 
     # Pick the top candidate not in excluded_set
     top_gainer = None
@@ -216,8 +209,12 @@ def find_top_gainer_4h(
         top_gainer = gainer_results[0]
 
     log.info(
-        f"[Strategy] 🏆 Top Momentum Coin Selected: {top_gainer['symbol']} "
-        f"(1H Gain: +{top_gainer['gain_1h_pct']}%, 4H Gain: +{top_gainer['gain_4h_pct']}%, Price: ${top_gainer['current_price']})"
+        f"[Strategy] 🏆 Best 1H Gainer Selected: {top_gainer['symbol']} "
+        f"(1H Gain: +{top_gainer['gain_1h_pct']}%, Price: ${top_gainer['current_price']})"
     )
 
     return top_gainer
+
+
+# Backward-compatible alias so existing callers (dashboard/app.py) don't break
+find_top_gainer_4h = find_top_gainer_1h
