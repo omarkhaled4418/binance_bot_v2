@@ -690,7 +690,7 @@ def api_start():
                     _session_traded_symbols.clear()
                     _session_traded_symbols.add(sym)
 
-                _push_log("warning", f"🔄 Auto-Convert Enabled: Scanning for Best 1H Gainer on Binance (≥ +2% in last 1H, excluding {list(_session_traded_symbols)}) …")
+                _push_log("warning", f"🔄 Auto-Convert Enabled: Scanning for Best 1H Gainer on Binance (excluding {list(_session_traded_symbols)}) …")
                 try:
                     top_gainer = find_top_gainer_1h(client=client, exclude_symbols=_session_traded_symbols)
                     top_sym = top_gainer["symbol"]

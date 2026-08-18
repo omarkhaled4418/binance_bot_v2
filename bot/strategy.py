@@ -25,20 +25,16 @@ def find_top_gainer_1h(
     client: Client | None = None,
     exclude_symbols: str | set[str] | list[str] = "",
     min_volume_usdt: float = 250_000.0,
-    min_1h_gain_pct: float = 2.0,
     top_candidates_count: int = 50,
 ) -> dict:
     """
     Find the coin with the highest percentage price gain over the last 1 hour.
-    Requires AT LEAST +2% price increase in the last 1 hour.
-    Skips any symbols that haven't increased by at least min_1h_gain_pct in the last hour,
-    and skips any symbols in exclude_symbols.
+    No minimum threshold — simply picks the best 1H gainer available.
 
     Args:
         client:               Optional authenticated Binance client.
         exclude_symbols:      Symbol or collection of symbols to exclude.
         min_volume_usdt:      Minimum 24h quote volume in USDT to ensure liquidity.
-        min_1h_gain_pct:      Minimum required price increase in the last 1 hour (default: 2.0%).
         top_candidates_count: Number of candidates to scan klines for.
 
     Returns:
@@ -56,7 +52,7 @@ def find_top_gainer_1h(
         excluded_set = {s.strip().upper() for s in exclude_symbols if s}
 
     log.info(
-        f"[Strategy] Scanning Binance market for Best 1H Gainer (Minimum 1H Gain ≥ +{min_1h_gain_pct}%, excluding {excluded_set}) …"
+        f"[Strategy] Scanning Binance market for Best 1H Gainer (excluding {excluded_set}) …"
     )
 
     # 1. Fetch tradable symbols on the target client exchange (e.g. Testnet vs Live)
@@ -144,13 +140,6 @@ def find_top_gainer_1h(
                 if open_1h_ago > 0:
                     gain_1h_pct = ((current_close - open_1h_ago) / open_1h_ago) * 100.0
 
-                    # Check 1-hour minimum gain filter
-                    if gain_1h_pct < min_1h_gain_pct:
-                        log.debug(
-                            f"[Strategy] Skipping {sym}: 1H gain (+{gain_1h_pct:.2f}%) < required +{min_1h_gain_pct}%"
-                        )
-                        continue
-
                     gainer_results.append({
                         "symbol": sym,
                         "gain_1h_pct": round(gain_1h_pct, 2),
@@ -163,37 +152,7 @@ def find_top_gainer_1h(
             continue
 
     if not gainer_results:
-        log.warning(
-            f"[Strategy] No coins met the strict +{min_1h_gain_pct}% 1H gain threshold. Falling back to highest 1H gainer above 0% …"
-        )
-        # Fallback: find best positive 1h gainer if none met the threshold
-        for c in top_candidates[:20]:
-            sym = c["symbol"]
-            try:
-                k_resp = http_requests.get(
-                    _KLINES_URL,
-                    params={"symbol": sym, "interval": "1h", "limit": 3},
-                    timeout=5,
-                )
-                k_resp.raise_for_status()
-                klines = k_resp.json()
-                if len(klines) >= 2:
-                    open_1h_ago = float(klines[-2][1])
-                    current_close = float(klines[-1][4])
-                    if open_1h_ago > 0:
-                        gain_1h_pct = ((current_close - open_1h_ago) / open_1h_ago) * 100.0
-                        gainer_results.append({
-                            "symbol": sym,
-                            "gain_1h_pct": round(gain_1h_pct, 2),
-                            "current_price": current_close,
-                            "open_1h_price": open_1h_ago,
-                            "quote_volume_24h": c["quote_volume_24h"],
-                        })
-            except Exception:
-                continue
-
-    if not gainer_results:
-        raise ValueError(f"No suitable gainers found on Binance USDT market.")
+        raise ValueError("No suitable gainers found on Binance USDT market.")
 
     # Sort by 1H gain (primary ranking)
     gainer_results.sort(key=lambda x: x["gain_1h_pct"], reverse=True)
@@ -216,5 +175,5 @@ def find_top_gainer_1h(
     return top_gainer
 
 
-# Backward-compatible alias so existing callers (dashboard/app.py) don't break
+# Backward-compatible alias
 find_top_gainer_4h = find_top_gainer_1h
