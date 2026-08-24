@@ -32,10 +32,9 @@ const coinBalancePill  = document.getElementById('coin-balance-pill');
 const coinBalanceText  = document.getElementById('coin-balance-text');
 const btnUseMax        = document.getElementById('btn-use-max');
 const btnQuickBuy      = document.getElementById('btn-quick-buy');
-const targetTypeSelect = document.getElementById('target-type');
-const targetLabel      = document.getElementById('target-label');
-const targetHint       = document.getElementById('target-hint');
-const targetPriceInput = document.getElementById('target-price');
+const buyPriceInput    = document.getElementById('buy-price');
+const buyPriceLabel    = document.getElementById('buy-price-label');
+const buyPriceHint     = document.getElementById('buy-price-hint');
 const quantityTypeSelect = document.getElementById('quantity-type');
 const quantityLabel      = document.getElementById('quantity-label');
 const quantityHint       = document.getElementById('quantity-hint');
@@ -124,7 +123,8 @@ const sellPresetChips         = document.querySelectorAll('.btn-sell-preset-chip
 let currentMode   = 'testnet';  // 'testnet' | 'live'
 let botStatus     = 'idle';     // 'idle' | 'running' | 'triggered' | 'error'
 let priceHistory  = [];         // { time, price }[]
-let targetPrice   = 0;
+let buyPrice      = 0;
+let minProfitPct  = 0.2;
 let currentPrice  = 0;
 let configSymbol  = '';
 
@@ -139,19 +139,7 @@ let cachedBalances = {
 
 const MAX_PRICE_POINTS = 120;   // keep last 120 ticks on chart
 
-// ── Target & Quantity Select toggles ──────────────────────────────────────────
-targetTypeSelect.addEventListener('change', () => {
-  if (targetTypeSelect.value === 'percentage') {
-    targetLabel.textContent = 'Target Profit (%)';
-    targetPriceInput.placeholder = 'e.g. 10 (for +10% profit)';
-    targetHint.textContent = 'Sell order triggers when price rises by this % above entry price';
-  } else {
-    targetLabel.textContent = 'Target Sell Price (USDT)';
-    targetPriceInput.placeholder = 'e.g. 70000';
-    targetHint.textContent = 'Sell order triggers when price reaches this value';
-  }
-});
-
+// ── Quantity Select toggle ───────────────────────────────────────────────────
 quantityTypeSelect.addEventListener('change', () => {
   if (quantityTypeSelect.value === 'usdt') {
     quantityLabel.textContent = 'Amount to Sell (USDT)';
@@ -724,7 +712,7 @@ const chart = new Chart(ctx, {
         fill: true,
       },
       {
-        label: 'Target',
+        label: 'Buy Price',
         data: [],
         borderColor: '#f59e0b',
         borderWidth: 1.5,
@@ -884,10 +872,10 @@ function pushPrice(price) {
   chart.data.labels = priceHistory.map(p => p.time);
   chart.data.datasets[0].data = priceHistory.map(p => p.price);
 
-  if (targetPrice > 0) {
-    chart.data.datasets[1].data = priceHistory.map(() => targetPrice);
+  if (buyPrice > 0) {
+    chart.data.datasets[1].data = priceHistory.map(() => buyPrice);
     targetIndicator.style.display = 'flex';
-    targetIndicatorV.textContent = fmt(targetPrice);
+    targetIndicatorV.textContent = `$${fmt(buyPrice, 6)} (Sells when ≥ +${minProfitPct}%)`;
   }
 
   chart.update('none');
@@ -896,12 +884,19 @@ function pushPrice(price) {
   // Update stat panel
   statPrice.textContent = fmt(price);
 
-  if (targetPrice > 0) {
-    const dist = targetPrice - price;
-    const pct  = Math.max(0, Math.min(100, (price / targetPrice) * 100));
-    const sign  = dist >= 0 ? '+' : '';
-    statDistance.textContent = `${sign}${fmt(Math.abs(dist))} (${pct.toFixed(1)}%)`;
-    statDistance.style.color = dist <= 0 ? 'var(--green)' : 'var(--text-primary)';
+  if (buyPrice > 0) {
+    statTarget.textContent = `$${fmt(buyPrice, 6)}`;
+    const diff = price - buyPrice;
+    const pct  = ((price - buyPrice) / buyPrice) * 100;
+    const sign  = pct >= 0 ? '+' : '';
+    statDistance.textContent = `${sign}${pct.toFixed(2)}% (${sign}$${fmt(Math.abs(diff), 4)})`;
+    if (pct >= minProfitPct) {
+      statDistance.style.color = 'var(--green)';
+    } else if (pct < 0) {
+      statDistance.style.color = 'var(--red)';
+    } else {
+      statDistance.style.color = 'var(--yellow)';
+    }
   }
 }
 
@@ -911,8 +906,7 @@ botForm.addEventListener('submit', async (e) => {
   clearError();
 
   const symbol = symbolInput.value.trim().toUpperCase();
-  const targetType = targetTypeSelect.value;
-  const tp     = parseFloat(targetPriceInput.value);
+  const bp     = parseFloat(buyPriceInput.value) || 0;
   const quantityType = quantityTypeSelect.value;
   const qty    = parseFloat(quantityInput.value);
   const dropPct = parseFloat(dropPercentageInput.value) || 0;
@@ -924,22 +918,13 @@ botForm.addEventListener('submit', async (e) => {
   const secret = apiSecretInput.value.trim();
 
   if (!symbol)       return showError('Please enter a coin symbol (e.g. BTCUSDT).');
-  if (isNaN(tp) || tp <= 0) return showError('Enter a valid target price or percentage > 0.');
   if (isNaN(qty) || qty <= 0) return showError('Enter a valid quantity > 0.');
   if (dropPct < 0)   return showError('Drop threshold % must be >= 0.');
-
-  // Warn if target price is below current price
-  if (targetType === 'price' && currentPrice > 0 && tp <= currentPrice) {
-    const confirmLowTarget = confirm(
-      `⚠️ WARNING: Target price ($${tp}) is LESS THAN current price ($${fmt(currentPrice)}).\n\nStarting the bot will trigger a MARKET SELL immediately.\n\nDo you want to proceed?`
-    );
-    if (!confirmLowTarget) return;
-  }
 
   // Warn for live mode
   if (!isTestnet) {
     const confirmed = confirm(
-      `⚠️ LIVE MODE WARNING\n\nYou are about to start the bot in LIVE mode.\nThis will trade REAL funds on your Binance account.\n\nSymbol: ${symbol}\nTarget: ${tp}\nAmount: ${qty}\n\nContinue?`
+      `⚠️ LIVE MODE WARNING\n\nYou are about to start the bot in LIVE mode.\nThis will trade REAL funds on your Binance account.\n\nSymbol: ${symbol}\nAmount: ${qty}\n\nContinue?`
     );
     if (!confirmed) return;
   }
@@ -953,8 +938,8 @@ botForm.addEventListener('submit', async (e) => {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         symbol,
-        target_type: targetType,
-        target_price: tp,
+        buy_price: bp,
+        min_profit_pct: minProfitPct,
         quantity_type: quantityType,
         quantity: qty,
         drop_percentage: dropPct,
@@ -979,12 +964,16 @@ botForm.addEventListener('submit', async (e) => {
     saveKeys(currentMode);
 
     // Update UI state
-    targetPrice   = tp;
+    buyPrice      = data.buy_price || bp || data.current_price;
     configSymbol  = symbol;
     priceHistory  = [];
 
+    if (buyPriceInput && !buyPriceInput.value) {
+      buyPriceInput.value = buyPrice;
+    }
+
     chartSymbolLabel.textContent = symbol;
-    statTarget.textContent  = fmt(tp);
+    statTarget.textContent  = `$${fmt(buyPrice, 6)}`;
     statAmount.textContent  = quantityType === 'usdt' ? `$${fmt(qty, 2)} USDT` : `${qty} ${symbol}`;
 
     startBtn.innerHTML = '<span class="btn-icon">▶</span> Start Bot';
@@ -1203,7 +1192,8 @@ if (modalSellForm) {
 // ── Triggered overlay ─────────────────────────────────────────────────────────
 function showTriggered() {
   overlayDesc.textContent =
-    `🎯 Profit target reached for ${configSymbol}! A MARKET SELL order was executed to close your position. ` +
+    `🎯 Profit secured for ${configSymbol}! The market price rose above your buy price (≥ +${minProfitPct}%). ` +
+    `A MARKET SELL order was executed to secure your profit. ` +
     `Trading has stopped — the bot will NOT place any further trades until you start it again.`;
   triggeredOverlay.style.display = 'flex';
 }
@@ -1222,8 +1212,10 @@ socket.on('disconnect', () => {
   appendLog('warning', '⚠ Disconnected from server.');
 });
 
-socket.on('price_update', ({ symbol, price, target }) => {
-  targetPrice = target;
+socket.on('price_update', ({ symbol, price, buy_price, target, min_profit_pct }) => {
+  if (buy_price) buyPrice = buy_price;
+  else if (target) buyPrice = target;
+  if (min_profit_pct !== undefined) minProfitPct = min_profit_pct;
   pushPrice(price);
 });
 
@@ -1245,12 +1237,8 @@ socket.on('bot_status', ({ status, config }) => {
 
   if (config && Object.keys(config).length) {
     if (config.symbol)          { symbolInput.value = config.symbol; chartSymbolLabel.textContent = config.symbol; configSymbol = config.symbol; }
-    if (config.target_type)     { targetTypeSelect.value = config.target_type; targetTypeSelect.dispatchEvent(new Event('change')); }
-    if (config.target_type === 'percentage' && config.target_percentage) {
-      targetPriceInput.value = config.target_percentage;
-    } else if (config.target_price) {
-      targetPriceInput.value = config.target_price;
-    }
+    if (config.buy_price)       { buyPrice = config.buy_price; if (buyPriceInput) buyPriceInput.value = config.buy_price; statTarget.textContent = `$${fmt(config.buy_price, 6)}`; }
+    if (config.min_profit_pct)  { minProfitPct = config.min_profit_pct; }
     if (config.quantity_type)   { quantityTypeSelect.value = config.quantity_type; quantityTypeSelect.dispatchEvent(new Event('change')); }
     if (config.usdt_amount && config.quantity_type === 'usdt') {
       quantityInput.value = config.usdt_amount;
@@ -1258,7 +1246,6 @@ socket.on('bot_status', ({ status, config }) => {
       quantityInput.value = config.quantity;
     }
 
-    if (config.target_price)    { targetPrice = config.target_price; statTarget.textContent = fmt(config.target_price); }
     if (config.usdt_amount && config.quantity_type === 'usdt') {
       statAmount.textContent = `$${fmt(config.usdt_amount, 2)} USDT`;
     } else if (config.quantity) {

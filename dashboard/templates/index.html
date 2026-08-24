@@ -135,21 +135,15 @@
           </div>
         </div>
 
-        <!-- Target Type Selection -->
+        <!-- Buy / Entry Price input -->
         <div class="form-group">
-          <label class="form-label" for="target-type">Target Type</label>
-          <select id="target-type" class="form-input">
-            <option value="price">💵 Exact Target Price ($)</option>
-            <option value="percentage">📈 Target Profit (%)</option>
-          </select>
-        </div>
-
-        <!-- Target price / percentage input -->
-        <div class="form-group">
-          <label class="form-label" id="target-label" for="target-price">Target Sell Price (USDT)</label>
-          <input type="number" id="target-price" class="form-input" placeholder="e.g. 70000"
+          <div class="label-row">
+            <label class="form-label" id="buy-price-label" for="buy-price">Buy / Entry Price (USDT)</label>
+            <span class="secure-badge" style="font-size:0.7rem; color:var(--text-secondary);">Auto-detected on start</span>
+          </div>
+          <input type="number" id="buy-price" class="form-input" placeholder="Leave empty for auto live price"
                  min="0" step="any" />
-          <span class="form-hint" id="target-hint">Sell order triggers when price reaches this value</span>
+          <span class="form-hint" id="buy-price-hint">Bot automatically sells when price gets higher than this buy price (≥ +0.2%)</span>
         </div>
 
         <!-- Amount Type Selection -->
@@ -199,12 +193,12 @@
 
         <!-- Action on Goal Reached -->
         <div class="form-group">
-          <label class="form-label" for="auto-restart-on-trigger">Action on Goal Reached (Profit Take)</label>
+          <label class="form-label" for="auto-restart-on-trigger">Action on Higher Price (Profit Sell)</label>
           <select id="auto-restart-on-trigger" class="form-input">
             <option value="true">🔄 Re-Buy Same Coin & Restart (Continuous Profit Loop)</option>
             <option value="false">🏁 Stop Trading (Close Position)</option>
           </select>
-          <span class="form-hint">When profit target is hit: sells, re-buys the same coin, and monitors next target. (Converts coin ONLY if price drops).</span>
+          <span class="form-hint">When price rises higher than buy price: sells at profit, re-buys same coin at market price, and repeats.</span>
         </div>
 
         <!-- Actions -->
@@ -233,11 +227,11 @@
           <div class="stat-value" id="stat-price">—</div>
         </div>
         <div class="stat">
-          <div class="stat-label">Target Price</div>
+          <div class="stat-label">Buy / Entry Price</div>
           <div class="stat-value accent" id="stat-target">—</div>
         </div>
         <div class="stat">
-          <div class="stat-label">Distance to Target</div>
+          <div class="stat-label">Profit / Gain vs Buy</div>
           <div class="stat-value" id="stat-distance">—</div>
         </div>
         <div class="stat">
@@ -272,10 +266,10 @@
           Start the bot to see a live price feed
         </div>
       </div>
-      <!-- Target price line indicator -->
+      <!-- Buy price line indicator -->
       <div class="target-indicator" id="target-indicator" style="display:none">
         <span class="target-dot"></span>
-        Target: <strong id="target-indicator-value">—</strong>
+        Buy Price: <strong id="target-indicator-value">—</strong>
       </div>
     </div>
 
@@ -298,8 +292,8 @@
 <div class="overlay" id="triggered-overlay" style="display:none">
   <div class="overlay-card">
     <div class="overlay-icon">🎯</div>
-    <h2 class="overlay-title">Target Reached!</h2>
-    <p class="overlay-desc" id="overlay-desc">Your sell order has been placed successfully.</p>
+    <h2 class="overlay-title">Profit Secured!</h2>
+    <p class="overlay-desc" id="overlay-desc">Price went higher than your purchase price and your sell order was placed successfully.</p>
     <button class="btn btn-primary" id="overlay-close-btn">Close</button>
   </div>
 </div>

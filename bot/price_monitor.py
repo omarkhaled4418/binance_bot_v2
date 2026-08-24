@@ -37,7 +37,7 @@ class PriceMonitor:
     def __init__(
         self,
         symbol: str,
-        target_price: float,
+        buy_price: float,
         quantity: float,
         testnet: bool,
         on_price,                  # callback(price: float)
@@ -45,19 +45,23 @@ class PriceMonitor:
         on_error,                  # callback(error: str)
         initial_price: float = 0.0,# starting price for percentage drop calculation
         drop_percentage: float = 0.0, # e.g. 5.0 for 5% drop trigger
+        min_profit_pct: float = 0.2,  # e.g. 0.2 for +0.2% profit above buy price
         on_drop=None,              # callback(symbol, current_price, initial_price, actual_drop_pct)
         api_key: str | None = None,
         api_secret: str | None = None,
+        target_price: float | None = None, # optional backwards-compatibility alias
     ):
         self.symbol = symbol.upper()
-        self.target_price = target_price
+        self.buy_price = buy_price if buy_price > 0 else (target_price or 0.0)
+        self.target_price = self.buy_price
         self.quantity = quantity
         self.testnet = testnet
         self.on_price = on_price
         self.on_trigger = on_trigger
         self.on_error = on_error
-        self.initial_price = initial_price
+        self.initial_price = initial_price if initial_price > 0 else self.buy_price
         self.drop_percentage = drop_percentage
+        self.min_profit_pct = min_profit_pct
         self.on_drop = on_drop
         self.api_key = api_key
         self.api_secret = api_secret
@@ -80,7 +84,10 @@ class PriceMonitor:
         self._last_tick_time = time.time()
         self._thread = threading.Thread(target=self._run, daemon=True)
         self._thread.start()
-        log.info(f"[PriceMonitor] Started monitoring {self.symbol} @ target {self.target_price}")
+        log.info(
+            f"[PriceMonitor] Started monitoring {self.symbol} @ buy price {self.buy_price} "
+            f"(real-time ~0.2s stream, triggers sell when price >= +{self.min_profit_pct}% higher)"
+        )
 
     def stop(self):
         """Stop the WebSocket stream."""
@@ -114,13 +121,13 @@ class PriceMonitor:
             )
             self._twm.start()
 
-            # Use individual symbol miniTicker WebSocket stream (~1s updates)
-            stream_name = self._twm.start_symbol_miniticker_socket(
+            # Use real-time aggTrade WebSocket stream (~0.1s - 0.2s updates on every trade)
+            stream_name = self._twm.start_aggtrade_socket(
                 callback=self._handle_message,
                 symbol=self.symbol,
             )
 
-            log.info(f"[PriceMonitor] WebSocket stream started: {stream_name}")
+            log.info(f"[PriceMonitor] Real-time trade stream started: {stream_name}")
 
             # Keep thread alive while running, with watchdog check every 2 seconds
             while self._running:
@@ -134,8 +141,9 @@ class PriceMonitor:
                     self._last_tick_time = time.time()  # Reset to avoid spamming
 
         except Exception as exc:
-            log.error(f"[PriceMonitor] Stream error: {exc}")
-            self.on_error(str(exc))
+            if self._running and not self._triggered:
+                log.error(f"[PriceMonitor] Stream error: {exc}")
+                self.on_error(str(exc))
             self._running = False
         finally:
             if self._twm:
@@ -149,14 +157,19 @@ class PriceMonitor:
         if not self._running or self._triggered:
             return
 
-        # MiniTicker payload uses 'c' for close/current price
         event_type = msg.get("e", "")
         if event_type == "error":
-            self.on_error(str(msg))
+            # Ignore disconnection / teardown messages when stopping or triggered
+            if self._running and not self._triggered:
+                err_msg = str(msg.get("m", msg))
+                if "reconnect" not in err_msg.lower():
+                    self.on_error(err_msg)
             return
 
+        # Support 'p' (aggTrade/trade price), 'c' (miniTicker close price), 'b' (bookTicker bid)
         try:
-            price = float(msg.get("c", 0))
+            raw_p = msg.get("p", msg.get("c", msg.get("b", 0)))
+            price = float(raw_p)
         except (ValueError, TypeError):
             return
 
@@ -186,17 +199,20 @@ class PriceMonitor:
                         daemon=True,
                     ).start()
 
-        # Check trigger condition: price reached or exceeded target
-        if price >= self.target_price:
+        # Check trigger condition: price higher than buy price by at least min_profit_pct (e.g. +0.1%)
+        trigger_threshold = self.buy_price * (1.0 + self.min_profit_pct / 100.0) if self.buy_price > 0 else 0.0
+        if self.buy_price > 0 and price >= trigger_threshold:
             self._triggered = True
             self._running = False
+            gain_pct = ((price - self.buy_price) / self.buy_price) * 100.0
             log.info(
-                f"[PriceMonitor] TRIGGER! {self.symbol} price {price} >= target {self.target_price}"
+                f"[PriceMonitor] TRIGGER! {self.symbol} price {price} is higher than buy price {self.buy_price} "
+                f"(+{gain_pct:.2f}% >= +{self.min_profit_pct}%) -> SELLING NOW"
             )
             # Offload on_trigger to background thread to avoid blocking WebSocket
             threading.Thread(
                 target=self._safe_callback,
-                args=("on_trigger", self.on_trigger, self.symbol, self.quantity),
+                args=("on_trigger", self.on_trigger, self.symbol, self.quantity, price),
                 daemon=True,
             ).start()
 

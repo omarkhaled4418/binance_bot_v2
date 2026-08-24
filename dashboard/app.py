@@ -478,13 +478,13 @@ def api_start():
     # ── Validate input ──────────────────────────────────────────────────
     symbol = str(data.get("symbol", "")).strip().upper()
     try:
-        raw_target_val = float(data.get("target_price", 0))
+        raw_buy_price = float(data.get("buy_price", 0))
         raw_quantity_val = float(data.get("quantity", 0))
         drop_percentage = float(data.get("drop_percentage", settings.DEFAULT_DROP_PERCENTAGE))
+        min_profit_pct = float(data.get("min_profit_pct", 0.2))
     except (ValueError, TypeError):
-        return jsonify({"error": "target_price, quantity, and drop_percentage must be numbers."}), 400
+        return jsonify({"error": "buy_price, quantity, drop_percentage, and min_profit_pct must be numbers."}), 400
 
-    target_type = str(data.get("target_type", "price")).strip().lower()
     quantity_type = str(data.get("quantity_type", "usdt")).strip().lower()
     n8n_webhook_url = str(data.get("n8n_webhook_url", settings.N8N_WEBHOOK_URL)).strip()
     auto_convert: bool = bool(data.get("auto_convert", settings.AUTO_CONVERT_ON_DROP))
@@ -493,12 +493,12 @@ def api_start():
 
     if not symbol:
         return jsonify({"error": "symbol is required."}), 400
-    if raw_target_val <= 0:
-        return jsonify({"error": "target_price or percentage must be greater than 0."}), 400
     if raw_quantity_val <= 0:
         return jsonify({"error": "quantity or USDT amount must be greater than 0."}), 400
     if drop_percentage < 0:
         return jsonify({"error": "drop_percentage must be >= 0."}), 400
+    if min_profit_pct < 0:
+        min_profit_pct = 0.2
 
     # ── Stop any existing monitor ───────────────────────────────────────
     if _monitor and _monitor.is_running:
@@ -513,13 +513,8 @@ def api_start():
     except Exception as exc:
         return jsonify({"error": f"Failed to initialize client for {symbol}: {exc}"}), 400
 
-    # Compute target price and target percentage based on target_type
-    if target_type == "percentage":
-        target_percentage = raw_target_val
-        target_price = current_price * (1.0 + target_percentage / 100.0)
-    else:
-        target_price = raw_target_val
-        target_percentage = ((target_price - current_price) / current_price) * 100.0 if current_price > 0 else 0.0
+    # Auto-detect buy price if not provided
+    buy_price = raw_buy_price if raw_buy_price > 0 else current_price
 
     # Compute quantity in base asset and USDT amount based on quantity_type
     if quantity_type == "usdt":
@@ -529,13 +524,15 @@ def api_start():
         quantity = raw_quantity_val
         usdt_amount = quantity * current_price
 
+    min_sell_price = buy_price * (1.0 + min_profit_pct / 100.0)
+
     _trade_log = []
     _session_traded_symbols = {symbol}
     _bot_config = {
         "symbol": symbol,
-        "target_type": target_type,
-        "target_percentage": round(target_percentage, 2),
-        "target_price": round(target_price, 6),
+        "buy_price": round(buy_price, 6),
+        "min_profit_pct": min_profit_pct,
+        "target_price": round(min_sell_price, 6), # compatibility alias
         "quantity_type": quantity_type,
         "usdt_amount": round(usdt_amount, 2),
         "quantity": quantity,
@@ -549,16 +546,16 @@ def api_start():
 
     mode_label = "TESTNET" if testnet else "LIVE"
     _push_log("info", f"[{mode_label}] Bot started — {symbol}")
-    _push_log("info", f"Target mode        : {'Percentage (+' + str(round(target_percentage, 2)) + '%)' if target_type == 'percentage' else 'Exact Price ($' + str(round(target_price, 6)) + ')'}")
-    _push_log("info", f"Calculated target  : {target_price:,.6f}")
+    _push_log("info", f"Buy / Entry Price  : ${buy_price:,.6f}")
+    _push_log("info", f"Sell Condition     : Triggers when Price >= ${min_sell_price:,.6f} (+{min_profit_pct}% above buy price)")
     _push_log("info", f"Amount to sell     : ${usdt_amount:,.2f} USDT ({quantity:,.6f} {symbol})")
-    _push_log("info", f"Current price      : {current_price:,.6f}")
-    restart_action_desc = "Auto-Restart Bot" if auto_restart_on_trigger else "Stop Trading"
+    _push_log("info", f"Current price      : ${current_price:,.6f}")
+    restart_action_desc = "Auto-Restart Bot (Continuous Cycle)" if auto_restart_on_trigger else "Stop Trading"
     _push_log("info", f"Goal reached action: {restart_action_desc}")
     if drop_percentage > 0:
-        drop_price = current_price * (1.0 - drop_percentage / 100.0)
+        drop_price = buy_price * (1.0 - drop_percentage / 100.0)
         action_desc = "Auto-Convert & Continuous Loop" if auto_convert else "Alert Only"
-        _push_log("info", f"Price drop action  : {drop_percentage}% drop → {action_desc} (≤ {drop_price:,.6f})")
+        _push_log("info", f"Price drop action  : {drop_percentage}% drop → {action_desc} (≤ ${drop_price:,.6f})")
     if n8n_webhook_url:
         _push_log("info", f"n8n Webhook URL    : {n8n_webhook_url}")
 
@@ -566,8 +563,7 @@ def api_start():
     def start_monitoring_for_symbol(
         current_sym: str,
         current_qty: float,
-        current_init_price: float,
-        current_target_price: float,
+        current_buy_price: float,
     ):
         global _monitor
 
@@ -575,11 +571,19 @@ def api_start():
             socketio.emit("price_update", {
                 "symbol": current_sym,
                 "price": price,
-                "target": current_target_price,
+                "buy_price": current_buy_price,
+                "target": current_buy_price * (1.0 + min_profit_pct / 100.0),
+                "min_profit_pct": min_profit_pct,
             })
 
-        def on_trigger(sym: str, qty: float):
-            _push_log("success", f"🎯 PROFIT TARGET REACHED for {sym}! Placing MARKET SELL for {qty} {sym} …")
+        def on_trigger(sym: str, qty: float, trigger_p: float = 0.0):
+            cur_p = trigger_p if trigger_p > 0 else get_current_price(sym, client=client)
+            gain_pct = ((cur_p - current_buy_price) / current_buy_price) * 100.0 if current_buy_price > 0 else min_profit_pct
+            _push_log(
+                "success",
+                f"🎯 PRICE HIGHER THAN BUY PRICE for {sym} (${cur_p:,.6f} > ${current_buy_price:,.6f}, +{gain_pct:.2f}%)! "
+                f"Placing MARKET SELL for {qty} {sym} …"
+            )
             order = place_market_sell(client, sym, qty)
             
             # Calculate USDT proceeds from the sell
@@ -590,14 +594,13 @@ def api_start():
                 pass
             if usdt_proceeds <= 0:
                 try:
-                    cur_p = get_current_price(sym, client=client)
                     usdt_proceeds = qty * cur_p
                 except Exception:
                     usdt_proceeds = usdt_amount
 
             _push_log(
                 "success",
-                f"🎉 TARGET SECURED! Sold {qty} {sym} for ${usdt_proceeds:.2f} USDT | Order ID={order.get('orderId')} | Status={order.get('status')}.",
+                f"🎉 PROFIT SECURED! Sold {qty} {sym} for ${usdt_proceeds:.2f} USDT | Order ID={order.get('orderId')} | Status={order.get('status')}.",
             )
 
             if auto_restart_on_trigger:
@@ -619,34 +622,28 @@ def api_start():
                     try:
                         new_price = get_current_price(sym, client=client)
                     except Exception:
-                        new_price = current_init_price
+                        new_price = current_buy_price
 
-                    if target_type == "percentage":
-                        new_target = round(new_price * (1.0 + target_percentage / 100.0), 6)
-                    else:
-                        ratio = current_target_price / current_init_price if current_init_price > 0 else (1.0 + target_percentage / 100.0)
-                        if ratio <= 1.0:
-                            ratio = 1.10
-                        new_target = round(new_price * ratio, 6)
+                    new_buy_price = new_price
 
                     _bot_config.update({
                         "symbol": sym,
                         "current_price": new_price,
-                        "target_price": new_target,
+                        "buy_price": new_buy_price,
+                        "target_price": round(new_buy_price * (1.0 + min_profit_pct / 100.0), 6),
                         "quantity": new_bought_qty,
                         "usdt_amount": round(spend_amount, 2),
                     })
 
                     _push_log(
                         "success",
-                        f"🚀 RE-BOUGHT {new_bought_qty} {sym} @ ${new_price:,.6f}! New Profit Target: ${new_target:,.6f} (+{target_percentage:.2f}%)"
+                        f"🚀 RE-BOUGHT {new_bought_qty} {sym} @ ${new_buy_price:,.6f}! Will sell when price >= ${new_buy_price * (1.0 + min_profit_pct / 100.0):,.6f} (+{min_profit_pct}%)"
                     )
 
                     start_monitoring_for_symbol(
                         current_sym=sym,
                         current_qty=new_bought_qty,
-                        current_init_price=new_price,
-                        current_target_price=new_target,
+                        current_buy_price=new_buy_price,
                     )
                 except Exception as rebuy_err:
                     _push_log("error", f"❌ Failed to re-buy {sym} on auto-restart: {rebuy_err}")
@@ -665,7 +662,7 @@ def api_start():
             _push_log(
                 "warning",
                 f"🚨 PRICE DROP DETECTED! {sym} dropped {actual_drop_pct:.2f}% "
-                f"(from {init_p:,.4f} to {cur_p:,.4f})!"
+                f"(from ${init_p:,.4f} to ${cur_p:,.4f})!"
             )
 
             payload = {
@@ -673,7 +670,7 @@ def api_start():
                 "symbol": sym,
                 "initial_price": init_p,
                 "current_price": cur_p,
-                "target_price": current_target_price,
+                "buy_price": current_buy_price,
                 "requested_drop_percentage": drop_percentage,
                 "actual_drop_percentage": round(actual_drop_pct, 2),
                 "auto_convert_enabled": auto_convert,
@@ -744,23 +741,15 @@ def api_start():
                         "buy_order_id": conversion["buy_order_id"],
                     })
 
-                    # Calculate new target price based on Target Profit % or target ratio
-                    if target_type == "percentage":
-                        new_target_price = round(top_price * (1.0 + target_percentage / 100.0), 6)
-                    else:
-                        target_ratio = current_target_price / current_init_price if current_init_price > 0 else (1.0 + target_percentage / 100.0)
-                        if target_ratio <= 1.0:
-                            target_ratio = 1.10
-                        new_target_price = round(top_price * target_ratio, 6)
+                    new_buy_price = top_price
 
                     # Update global bot config for new coin
                     _bot_config.update({
                         "symbol": top_sym,
-                        "target_type": target_type,
-                        "target_percentage": round(target_percentage, 2),
                         "quantity": new_bought_qty,
                         "current_price": top_price,
-                        "target_price": new_target_price,
+                        "buy_price": new_buy_price,
+                        "target_price": round(new_buy_price * (1.0 + min_profit_pct / 100.0), 6),
                         "drop_percentage": drop_percentage,
                         "auto_convert": True,
                         "n8n_webhook_url": n8n_webhook_url,
@@ -769,15 +758,14 @@ def api_start():
                     _push_log(
                         "info",
                         f"🔄 CONTINUOUS LOOP: Re-starting live WebSocket stream for {top_sym} "
-                        f"(Amount: {new_bought_qty}, Target: ${new_target_price:,.6f} [+{round(target_percentage, 2)}%], Drop: {drop_percentage}%)"
+                        f"(Amount: {new_bought_qty}, Buy Price: ${new_buy_price:,.6f}, Sells when price >= +{min_profit_pct}%, Drop: {drop_percentage}%)"
                     )
 
                     # Re-launch monitor continuously for the new coin
                     start_monitoring_for_symbol(
                         current_sym=top_sym,
                         current_qty=new_bought_qty,
-                        current_init_price=top_price,
-                        current_target_price=new_target_price,
+                        current_buy_price=new_buy_price,
                     )
 
                 except Exception as exc:
@@ -809,14 +797,15 @@ def api_start():
 
         _monitor = PriceMonitor(
             symbol=current_sym,
-            target_price=current_target_price,
+            buy_price=current_buy_price,
             quantity=current_qty,
             testnet=testnet,
             on_price=on_price,
             on_trigger=on_trigger,
             on_error=on_error,
-            initial_price=current_init_price,
+            initial_price=current_buy_price,
             drop_percentage=drop_percentage,
+            min_profit_pct=min_profit_pct,
             on_drop=on_drop,
             api_key=api_key,
             api_secret=api_secret,
@@ -828,11 +817,10 @@ def api_start():
     start_monitoring_for_symbol(
         current_sym=symbol,
         current_qty=quantity,
-        current_init_price=current_price,
-        current_target_price=target_price,
+        current_buy_price=buy_price,
     )
 
-    return jsonify({"ok": True, "current_price": current_price})
+    return jsonify({"ok": True, "current_price": current_price, "buy_price": buy_price})
 
 
 
